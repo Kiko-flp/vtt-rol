@@ -11,3 +11,13 @@
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
+<main class="dados-container">
+  <h1>Lienzo listo para el VTT</h1>
+  
+  <!-- 3. Vinculamos el clic del botón con on:click -->
+  <button class="mi-boton" on:click={pulsarBoton}>
+    🎲 TIRAR DADOS
+  </button>
+
+  <p class="resultado">{resultadoDado}</p>
+</main>
