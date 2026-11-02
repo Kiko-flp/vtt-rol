@@ -24,12 +24,7 @@
   let comandoChat = "";
   let panelDerechoRef;
 
-  let rejilla = {
-    tamano: 40,
-    color: "#ffffff",
-    grosor: 1,
-    opacidad: 0.3
-  };
+     let rejilla = { visible: true, tamano: 40, color: "#ffffff", grosor: 1, opacidad: 0.3 };
 
   onMount(async () => {
     try {
