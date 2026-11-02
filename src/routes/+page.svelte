@@ -1,148 +1,155 @@
 <!-- src/routes/+page.svelte -->
-<script lang="ts">
-  import type { ConfiguracionRejilla, Zona, Entidad, RegistroTirada } from '$lib/types';
-  
-  import PanelIzquierdo from './componentes/PanelIzquierdo.svelte';
-  import PanelDerecho from './componentes/PanelDerecho.svelte';
-  import Tablero from './componentes/Tablero.svelte';
-  import BarraRejilla from './componentes/BarraRejilla.svelte';
-  import BarraDados from './componentes/BarraDados.svelte';
-  import ModalFicha from './componentes/ModalFicha.svelte';
+<script>
+  import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
 
-  // Configuración de la rejilla (reactiva con la barra superior y el canvas)
-  let rejilla: ConfiguracionRejilla = {
+  import PanelIzquierdo from "./componentes/PanelIzquierdo.svelte";
+  import PanelDerecho from "./componentes/PanelDerecho.svelte";
+  import Tablero from "./componentes/Tablero.svelte";
+  import BarraRejilla from "./componentes/BarraRejilla.svelte";
+  import BarraDados from "./componentes/BarraDados.svelte";
+  import ModalFicha from "./componentes/ModalFicha.svelte";
+
+  let zonas = [];
+  let mapas = [];
+  let bancoEntidades = [];
+  let instanciasActivas = [];
+  let historialTiradas = [];
+
+  let zonaSeleccionadaId = 1;
+  let mapaActual = { ancho: 1000, alto: 1000, rejilla: 40, grosor: 1 };
+  let instanciaSeleccionada = null;
+  let fichaParaEditar = null;
+
+  let comandoChat = "";
+  let panelDerechoRef;
+
+  let rejilla = {
     tamano: 40,
     color: "#ffffff",
     grosor: 1,
-    opacidad: 0.3 // 30% como en tu dibujo
+    opacidad: 0.3
   };
 
-  // Datos de prueba para el prototipo
-  let zonas: Zona[] = [
-    { id: "1", nombre: "Mazmorra Nivel 1" },
-    { id: "2", nombre: "Taberna del Jabalí" },
-    { id: "3", nombre: "Bosque Sombrío" }
-  ];
+  onMount(async () => {
+    try {
+      zonas = await invoke("obtener_zonas");
+      mapas = await invoke("obtener_mapas_zona", { zonaId: 1 });
+      if (mapas.length > 0) aplicarMapa(mapas[0]);
+      bancoEntidades = await invoke("obtener_banco_entidades");
+      instanciasActivas = await invoke("obtener_instancias_activas");
+      historialTiradas = await invoke("obtener_historial_tiradas");
+    } catch (err) {
+      console.error("Error al obtener datos de Rust:", err);
+    }
+  });
 
-  let entidades: Entidad[] = [
-    { id: "e1", nombre: "Orco Guerrero", tipo: "enemigo", vidaActual: 15, vidaMax: 15, armadura: 12, cuerpo: 3, zonaId: "1", esPublico: false },
-    { id: "n1", nombre: "Tabernero", tipo: "npc", vidaActual: 10, vidaMax: 10, armadura: 10, cuerpo: 1, zonaId: "2", esPublico: true },
-    { id: "j1", nombre: "Valeros (Guerrero)", tipo: "jugador", vidaActual: 24, vidaMax: 28, armadura: 16, cuerpo: 4, zonaId: "1", esPublico: true }
-  ];
-
-  let historialTiradas: RegistroTirada[] = [
-    { id: "t1", formula: "3x1d6 + 3", desglose: "(3, 5, 2)", total: 13 },
-    { id: "t2", formula: "1x1d20", desglose: "(15)", total: 15 }
-  ];
-
-  // Control del modal de ficha
-  let entidadSeleccionada: Entidad | null = null;
-
-  function abrirFicha(entidad: Entidad) {
-    entidadSeleccionada = entidad;
+  async function cambiarZona(id) {
+    zonaSeleccionadaId = id;
+    mapas = await invoke("obtener_mapas_zona", { zonaId: id });
+    if (mapas.length > 0) aplicarMapa(mapas[0]);
   }
 
-  function realizarTirada(dado: string, bonif: number) {
-    // Prototipo de tirada rápido en local
-    const caras = parseInt(dado.replace('d', ''));
-    const resultado = Math.floor(Math.random() * caras) + 1;
+  function aplicarMapa(m) {
+    mapaActual = m;
+    rejilla.tamano = m.rejilla;
+    rejilla.grosor = m.grosor;
+    rejilla.opacidad = m.color_opacidad[3] / 255;
+    rejilla = { ...rejilla };
+  }
+
+  function sumarAlChat(fragmento) {
+    comandoChat = comandoChat ? `${comandoChat} + ${fragmento}` : fragmento;
+    panelDerechoRef?.enfocarChat();
+  }
+
+  function restarDelChat(fragmento) {
+    comandoChat = comandoChat ? `${comandoChat} - ${fragmento}` : `-${fragmento}`;
+    panelDerechoRef?.enfocarChat();
+  }
+
+  function ejecutarTiradaDesdeBoton(bonif) {
+    if (!comandoChat.trim()) return;
+    let final = comandoChat;
+    if (bonif !== 0) {
+      final += bonif > 0 ? ` + ${bonif}` : ` - ${Math.abs(bonif)}`;
+    }
+    procesarTirada(final);
+    comandoChat = "";
+  }
+
+  function procesarTirada(cmd) {
+    const ahora = new Date();
+    const horaStr = ahora.toTimeString().split(' ')[0]; // HH:MM:SS
     historialTiradas = [
-      {
-        id: Date.now().toString(),
-        formula: `1x${dado} ${bonif >= 0 ? '+' : ''}${bonif}`,
-        desglose: `(${resultado})`,
-        total: resultado + bonif
-      },
+      { id: Date.now(), comando: cmd, total: Math.floor(Math.random() * 20) + 1, hora: horaStr },
       ...historialTiradas
     ];
   }
+
+  function modificarVida(inst, delta) {
+    inst.vida_actual += delta;
+    instanciasActivas = [...instanciasActivas];
+  }
 </script>
 
-<div class="contenedor-app">
-  <!-- 1. Panel Izquierdo: Zonas y Banco -->
+<div class="contenedor-principal">
   <PanelIzquierdo 
-    {zonas} 
-    bancoEntidades={entidades} 
-    onAbrirFicha={abrirFicha} 
+    {zonas}
+    {mapas}
+    banco={bancoEntidades}
+    {zonaSeleccionadaId}
+    onSeleccionarZona={cambiarZona}
+    onSeleccionarMapa={aplicarMapa}
   />
 
-  <!-- 2. Área Central: Barra Rejilla + Lienzo + Barra Dados -->
   <main class="area-central">
-    <header class="cabecera-tablero">
+    <div class="barra-superior">
       <BarraRejilla bind:rejilla />
-    </header>
+    </div>
 
-    <section class="espacio-lienzo">
-      <Tablero {rejilla} />
-    </section>
+    <div class="contenedor-lienzo">
+      <Tablero mapa={mapaActual} {rejilla} />
+    </div>
 
-    <footer class="pie-dados">
-      <BarraDados onLanzarTirada={realizarTirada} />
-    </footer>
+    <div class="barra-inferior">
+      <BarraDados 
+        onSumarAlChat={sumarAlChat}
+        onRestarDelChat={restarDelChat}
+        onLanzarTirada={ejecutarTiradaDesdeBoton}
+      />
+    </div>
   </main>
 
-  <!-- 3. Panel Derecho: Activos y Tiradas -->
   <PanelDerecho 
-    entidadesActivas={entidades} 
-    {historialTiradas} 
-    onAbrirFicha={abrirFicha} 
+    bind:this={panelDerechoRef}
+    instancias={instanciasActivas}
+    tiradas={historialTiradas}
+    {instanciaSeleccionada}
+    bind:comandoChat
+    onSeleccionarInstancia={(i) => instanciaSeleccionada = i}
+    onModificarVida={modificarVida}
+    onEnviarTirada={procesarTirada}
   />
 
-  <!-- 4. Ventana Modal Ficha (si hay una seleccionada) -->
-  {#if entidadSeleccionada}
+  {#if fichaParaEditar}
     <ModalFicha 
-      entidad={entidadSeleccionada} 
+      entidad={fichaParaEditar} 
       {zonas} 
-      onCerrar={() => entidadSeleccionada = null} 
+      onCerrar={() => fichaParaEditar = null} 
     />
   {/if}
 </div>
 
 <style>
   :global(body, html) {
-    margin: 0;
-    padding: 0;
-    width: 100vw;
-    height: 100vh;
-    overflow: hidden;
-    background-color: #09090b;
-    color: #f4f4f5;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    margin: 0; padding: 0; width: 100vw; height: 100vh;
+    overflow: hidden; background: #09090b; color: #fafafa;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   }
-
-  .contenedor-app {
-    display: flex;
-    width: 100vw;
-    height: 100vh;
-  }
-
-  .area-central {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    position: relative;
-    overflow: hidden;
-  }
-
-  .cabecera-tablero {
-    position: absolute;
-    top: 10px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-  }
-
-  .espacio-lienzo {
-    flex: 1;
-    width: 100%;
-    height: 100%;
-  }
-
-  .pie-dados {
-    position: absolute;
-    bottom: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 10;
-  }
+  .contenedor-principal { display: flex; width: 100vw; height: 100vh; }
+  .area-central { flex: 1; position: relative; display: flex; flex-direction: column; overflow: hidden; }
+  .contenedor-lienzo { flex: 1; width: 100%; height: 100%; }
+  .barra-superior { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; }
+  .barra-inferior { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 10; }
 </style>
