@@ -23,6 +23,8 @@ tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tokio = { version = "1", features = ["fs", "sync"] }
+chrono = "0.4" # Para sacar la hora "HH:MM" directamente en Rust
 rand = "0.10.3"
 
 

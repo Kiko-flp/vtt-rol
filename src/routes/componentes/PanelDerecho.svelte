@@ -1,5 +1,7 @@
 <!-- src/routes/componentes/PanelDerecho.svelte -->
 <script>
+  import { invoke } from "@tauri-apps/api/core";
+
   let {
     instancias = [],
     tiradas = [],
@@ -11,22 +13,73 @@
   } = $props();
 
   let inputChatRef;
+  
+  // Estado de navegación local estilo terminal
+  let historial = [];
+  let indiceHistorial = -1; // -1 significa que no estamos navegando en el historial
+  let borradorTexto = "";   // Almacena lo que el usuario tenía escrito
 
-  // Se sigue pudiendo llamar desde el padre con bind:this
   export function enfocarChat() {
     inputChatRef?.focus();
+  }
+
+  function colocarCursorAlFinal() {
+    requestAnimationFrame(() => {
+      if (inputChatRef) {
+        const len = inputChatRef.value.length;
+        inputChatRef.setSelectionRange(len, len);
+      }
+    });
+  }
+
+  async function manejarKeyDown(e) {
+    if (e.key === "Enter") {
+      if (comandoChat.trim()) {
+        onEnviarTirada(comandoChat.trim());
+        comandoChat = "";
+        // Reiniciamos el estado de navegación
+        indiceHistorial = -1;
+        borradorTexto = "";
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+
+      // Si no estábamos navegando, pedimos el historial a Rust
+      if (indiceHistorial === -1) {
+        historial = await invoke("obtener_historial_personal");
+        if (historial.length === 0) return;
+        
+        borradorTexto = comandoChat; // Guardamos lo que estaba escribiendo
+        indiceHistorial = historial.length;
+      }
+
+      if (indiceHistorial > 0) {
+        indiceHistorial--;
+        comandoChat = historial[indiceHistorial];
+        colocarCursorAlFinal();
+      }
+    } else if (e.key === "ArrowDown") {
+      if (indiceHistorial === -1) return; // Si no estábamos navegando, no hace nada
+      e.preventDefault();
+
+      if (indiceHistorial < historial.length) {
+        indiceHistorial++;
+        
+        // Si volvemos abajo del todo, restauramos el texto original
+        if (indiceHistorial === historial.length) {
+          comandoChat = borradorTexto;
+          indiceHistorial = -1; // Salimos del modo historial
+        } else {
+          comandoChat = historial[indiceHistorial];
+        }
+        colocarCursorAlFinal();
+      }
+    }
   }
 
   let enemigos = $derived(instancias.filter((i) => i.base.tipo === "Enemigo"));
   let npcs = $derived(instancias.filter((i) => i.base.tipo === "NPC"));
   let jugadores = $derived(instancias.filter((i) => i.base.tipo === "Jugador"));
-
-  function presionarEnter(e) {
-    if (e.key === "Enter" && comandoChat.trim()) {
-      onEnviarTirada(comandoChat);
-      comandoChat = "";
-    }
-  }
 </script>
 
 <aside class="panel-derecho">
@@ -128,22 +181,23 @@
     <div class="recuadro-chat-tiradas">
       <div class="lista-tiradas">
         {#each tiradas as t}
-          <div class="linea-tirada">
-            <span class="hora">[{t.hora}]</span>
-            <span class="cmd">{t.comando}</span>
-            <strong class="total">= {t.total}</strong>
+          <div class="linea-tirada" class:error={!t.total}>
+            <span class="hora">{t.hora}</span>
+            <span class="cmd">{@html t.comando}</span>
+            {#if t.total}
+              <strong class="total">= {t.total}</strong>
+            {/if}
           </div>
         {/each}
       </div>
 
-      <!-- Línea fina separadora y zona de escribir comando -->
       <div class="input-comando-contenedor">
         <input
           type="text"
           bind:this={inputChatRef}
           bind:value={comandoChat}
           placeholder="Escribir comando (ej: 2d6 + 3)..."
-          onkeydown={presionarEnter}
+          onkeydown={manejarKeyDown}
           class="input-chat"
         />
       </div>
@@ -222,20 +276,77 @@
     flex-direction: column;
     overflow: hidden;
   }
+  .linea-tirada.error .cmd {
+    color: #ef4444;
+    font-style: italic;
+  }
+
   .lista-tiradas {
     flex: 1;
     overflow-y: auto;
     padding: 6px;
     font-family: monospace;
-    font-size: 12px; /* Fuente aumentada */
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 4px;
+
+    /* SCROLLBAR ULTRAFINA (Firefox y navegadores modernos) */
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
   }
-  .linea-tirada { display: flex; align-items: center; gap: 4px; }
-  .hora { color: #52525b; font-size: 10px; }
-  .cmd { flex: 1; color: #e4e4e7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .total { color: #4ade80; }
+  /* SCROLLBAR ULTRAFINA (Chrome, Edge, Tauri WebView) */
+  .lista-tiradas::-webkit-scrollbar {
+    width: 3px; /* Grosor de solo 3px (una línea discreta) */
+  }
+  .lista-tiradas::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .lista-tiradas::-webkit-scrollbar-thumb {
+    background: #3f3f46;
+    border-radius: 4px;
+  }
+  .lista-tiradas::-webkit-scrollbar-thumb:hover {
+    background: #71717a;
+  }
+
+
+ .linea-tirada {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 1px 0;
+  }
+
+  .hora {
+    color: #52525b;
+    font-size: 9px;
+    flex-shrink: 0;
+    margin-top: 2px;
+    letter-spacing: -0.5px;
+    user-select: none;
+  }
+
+  .cmd :global(b) {
+    font-weight: 900;
+    color: #ffffff; /* Blanco brillante para que destaque del resto de números */
+    text-shadow: 0 0 2px rgba(255, 255, 255, 0.4);
+  }
+
+  .cmd {
+    flex: 1;
+    color: #e4e4e7;
+    font-size: 11px;
+    white-space: normal;
+    word-break: break-word;
+    line-height: 1.25;
+  }
+
+  .total {
+    color: #4ade80;
+    font-size: 12px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
 
   .input-comando-contenedor {
     border-top: 1px solid #27272a; /* Línea fina separadora */
