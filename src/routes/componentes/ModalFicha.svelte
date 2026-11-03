@@ -1,21 +1,35 @@
 <!-- src/routes/componentes/ModalFicha.svelte -->
 <script>
-  export let entidad; // Instancia o Entidad directa de Rust
-  export let zonas = [];
-  export let onCerrar;
+  // entidad es $bindable porque este modal edita sus campos (nombre, vida, etc.)
+  let { entidad = $bindable(), zonas = [], onCerrar } = $props();
 
-  let pestanaActiva = 'texto';
+  let pestanaActiva = $state("texto");
 
   // Obtener datos independientemente de si nos pasan la Entidad o la Instancia
-  $: datosBase = entidad?.base ? entidad.base : entidad;
-  $: vidaActual = entidad?.vida_actual !== undefined ? entidad.vida_actual : datosBase?.vida_max;
+  let datosBase = $derived(entidad?.base ? entidad.base : entidad);
+  let vidaActual = $derived(entidad?.vida_actual !== undefined ? entidad.vida_actual : datosBase?.vida_max);
+
+  function alTeclear(e) {
+    if (e.key === "Escape") onCerrar();
+  }
 </script>
 
-<div class="fondo-oscuro" on:click={onCerrar}>
-  <div class="ventana-ficha" on:click|stopPropagation>
+<svelte:window onkeydown={alTeclear} />
+
+<!-- El fondo cierra al hacer clic fuera; Escape (arriba) es la alternativa de teclado -->
+<div class="fondo-oscuro" role="presentation" onclick={onCerrar}>
+  <div
+    class="ventana-ficha"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Ficha de entidad"
+    tabindex="-1"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => e.stopPropagation()}
+  >
     <header class="cabecera">
       <h2>Ficha de Entidad (Rolmaster)</h2>
-      <button class="btn-cerrar" on:click={onCerrar}>✕</button>
+      <button class="btn-cerrar" onclick={onCerrar} aria-label="Cerrar">✕</button>
     </header>
 
     <div class="cuerpo-ficha">
@@ -43,8 +57,8 @@
         </div>
 
         <div class="fila">
-          <label>Zona asociada:</label>
-          <select bind:value={datosBase.zona_id}>
+          <label for="ficha-zona">Zona asociada:</label>
+          <select id="ficha-zona" bind:value={datosBase.zona_id}>
             {#each zonas as z}
               <option value={z.id}>{z.nombre}</option>
             {/each}
@@ -54,12 +68,12 @@
     </div>
 
     <div class="pestanas">
-      <button class:activa={pestanaActiva === 'texto'} on:click={() => pestanaActiva = 'texto'}>Notas</button>
-      <button class:activa={pestanaActiva === 'pdf'} on:click={() => pestanaActiva = 'pdf'}>Archivos ({datosBase?.archivos_adjuntos?.length || 0})</button>
+      <button class:activa={pestanaActiva === "texto"} onclick={() => (pestanaActiva = "texto")}>Notas</button>
+      <button class:activa={pestanaActiva === "pdf"} onclick={() => (pestanaActiva = "pdf")}>Archivos ({datosBase?.archivos_adjuntos?.length || 0})</button>
     </div>
 
     <div class="contenido-pestana">
-      {#if pestanaActiva === 'texto'}
+      {#if pestanaActiva === "texto"}
         <textarea placeholder="Notas privadas del máster..."></textarea>
       {:else}
         <div class="panel-archivos">

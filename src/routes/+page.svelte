@@ -10,21 +10,27 @@
   import BarraDados from "./componentes/BarraDados.svelte";
   import ModalFicha from "./componentes/ModalFicha.svelte";
 
-  let zonas = [];
-  let mapas = [];
-  let bancoEntidades = [];
-  let instanciasActivas = [];
-  let historialTiradas = [];
+  let zonas = $state([]);
+  let mapas = $state([]);
+  let bancoEntidades = $state([]);
+  let instanciasActivas = $state([]);
+  let historialTiradas = $state([]);
 
-  let zonaSeleccionadaId = 1;
-  let mapaActual = { ancho: 1000, alto: 1000, rejilla: 40, grosor: 1 };
-  let instanciaSeleccionada = null;
-  let fichaParaEditar = null;
+  let zonaSeleccionadaId = $state(1);
+  let mapaActual = $state({ ancho: 1000, alto: 1000, rejilla: 40, grosor: 1 });
+  let instanciaSeleccionada = $state(null);
+  let fichaParaEditar = $state(null);
 
-  let comandoChat = "";
-  let panelDerechoRef;
+  let comandoChat = $state("");
+  let panelDerechoRef; // bind:this: solo se usa desde funciones
 
-     let rejilla = { visible: true, tamano: 40, color: "#ffffff", grosor: 1, opacidad: 0.3 };
+  let rejilla = $state({
+    visible: true,
+    tamano: 40,
+    color: "#ffffff",
+    grosor: 1,
+    opacidad: 0.3
+  });
 
   onMount(async () => {
     try {
@@ -47,10 +53,10 @@
 
   function aplicarMapa(m) {
     mapaActual = m;
+    // Con $state, basta con asignar: ya no hace falta rejilla = { ...rejilla }
     rejilla.tamano = m.rejilla;
     rejilla.grosor = m.grosor;
     rejilla.opacidad = m.color_opacidad[3] / 255;
-    rejilla = { ...rejilla };
   }
 
   function sumarAlChat(fragmento) {
@@ -75,7 +81,7 @@
 
   function procesarTirada(cmd) {
     const ahora = new Date();
-    const horaStr = ahora.toTimeString().split(' ')[0]; // HH:MM:SS
+    const horaStr = ahora.toTimeString().split(" ")[0]; // HH:MM:SS
     historialTiradas = [
       { id: Date.now(), comando: cmd, total: Math.floor(Math.random() * 20) + 1, hora: horaStr },
       ...historialTiradas
@@ -83,13 +89,13 @@
   }
 
   function modificarVida(inst, delta) {
+    // $state es profundo: modificar el campo ya actualiza la pantalla, sin copiar el array
     inst.vida_actual += delta;
-    instanciasActivas = [...instanciasActivas];
   }
 </script>
 
 <div class="contenedor-principal">
-  <PanelIzquierdo 
+  <PanelIzquierdo
     {zonas}
     {mapas}
     banco={bancoEntidades}
@@ -108,7 +114,7 @@
     </div>
 
     <div class="barra-inferior">
-      <BarraDados 
+      <BarraDados
         onSumarAlChat={sumarAlChat}
         onRestarDelChat={restarDelChat}
         onLanzarTirada={ejecutarTiradaDesdeBoton}
@@ -116,22 +122,22 @@
     </div>
   </main>
 
-  <PanelDerecho 
+  <PanelDerecho
     bind:this={panelDerechoRef}
     instancias={instanciasActivas}
     tiradas={historialTiradas}
     {instanciaSeleccionada}
     bind:comandoChat
-    onSeleccionarInstancia={(i) => instanciaSeleccionada = i}
+    onSeleccionarInstancia={(i) => (instanciaSeleccionada = i)}
     onModificarVida={modificarVida}
     onEnviarTirada={procesarTirada}
   />
 
   {#if fichaParaEditar}
-    <ModalFicha 
-      entidad={fichaParaEditar} 
-      {zonas} 
-      onCerrar={() => fichaParaEditar = null} 
+    <ModalFicha
+      bind:entidad={fichaParaEditar}
+      {zonas}
+      onCerrar={() => (fichaParaEditar = null)}
     />
   {/if}
 </div>

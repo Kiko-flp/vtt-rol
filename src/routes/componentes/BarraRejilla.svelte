@@ -8,7 +8,8 @@
     opacidad: number; // 0..1
   }
 
-  export let rejilla: Rejilla;
+  // $bindable: el padre usa <BarraRejilla bind:rejilla /> y los cambios le llegan.
+  let { rejilla = $bindable() }: { rejilla: Rejilla } = $props();
 
   const TAMANO_MIN = 5;
   const TAMANO_MAX = 300;
@@ -33,7 +34,7 @@
     <input
       type="checkbox"
       checked={rejilla.visible !== false}
-      on:change={(e) => (rejilla.visible = e.currentTarget.checked)}
+      onchange={(e) => (rejilla.visible = e.currentTarget.checked)}
     />
     <span>Rejilla</span>
   </label>
@@ -44,7 +45,7 @@
       id="rejilla-tamano"
       type="number"
       bind:value={rejilla.tamano}
-      on:change={normalizarTamano}
+      onchange={normalizarTamano}
       min={TAMANO_MIN}
       max={TAMANO_MAX}
       step="5"
@@ -64,7 +65,7 @@
       id="rejilla-grosor"
       type="number"
       bind:value={rejilla.grosor}
-      on:change={normalizarGrosor}
+      onchange={normalizarGrosor}
       min="0.5"
       max="5"
       step="0.5"

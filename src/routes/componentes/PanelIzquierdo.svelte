@@ -1,21 +1,25 @@
 <!-- src/routes/componentes/PanelIzquierdo.svelte -->
 <script>
-  export let zonas = [];
-  export let mapas = [];
-  export let banco = [];
-  export let zonaSeleccionadaId = 1;
-  export let onSeleccionarZona;
-  export let onSeleccionarMapa;
+  let {
+    zonas = [],
+    mapas = [],
+    banco = [],
+    zonaSeleccionadaId = 1,
+    onSeleccionarZona,
+    onSeleccionarMapa
+  } = $props();
 
-  let busqueda = "";
-  let filtroZona = "todos";
+  let busqueda = $state("");
+  let filtroZona = $state("todos");
 
-  $: entidadesFiltradas = banco.filter(e => {
-    if (e.tipo === "Jugador") return false;
-    const coincideNombre = e.nombre.toLowerCase().includes(busqueda.toLowerCase());
-    const coincideZona = filtroZona === "todos" || e.zona_id === zonaSeleccionadaId;
-    return coincideNombre && coincideZona;
-  });
+  let entidadesFiltradas = $derived(
+    banco.filter((e) => {
+      if (e.tipo === "Jugador") return false;
+      const coincideNombre = e.nombre.toLowerCase().includes(busqueda.toLowerCase());
+      const coincideZona = filtroZona === "todos" || e.zona_id === zonaSeleccionadaId;
+      return coincideNombre && coincideZona;
+    })
+  );
 </script>
 
 <aside class="panel-izquierdo">
@@ -24,10 +28,10 @@
       <span class="titulo-mini">ZONAS</span>
       <div class="scroll-zonas">
         {#each zonas as z}
-          <button 
-            class="item-zona" 
+          <button
+            class="item-zona"
             class:activo={zonaSeleccionadaId === z.id}
-            on:click={() => onSeleccionarZona(z.id)}
+            onclick={() => onSeleccionarZona(z.id)}
             title={z.nombre}
           >
             {z.id}
@@ -41,10 +45,11 @@
       <span class="titulo-mini">MAPAS</span>
       <div class="scroll-mapas">
         {#each mapas as m}
-          <div class="tarjeta-mapa" on:click={() => onSeleccionarMapa(m)}>
-            <div class="previa-mapa">🗺️</div>
+          <!-- button en vez de div: es clicable, y así funciona con teclado y no da avisos de accesibilidad -->
+          <button type="button" class="tarjeta-mapa" onclick={() => onSeleccionarMapa(m)}>
+            <span class="previa-mapa">🗺️</span>
             <span class="nombre-mapa">Mapa #{m.id}</span>
-          </div>
+          </button>
         {/each}
         {#if mapas.length === 0}
           <span class="vacio">Sin mapas</span>
@@ -55,9 +60,9 @@
 
   <div class="bloque-abajo">
     <div class="sub-busqueda">
-      <input 
-        type="text" 
-        placeholder="Buscar..." 
+      <input
+        type="text"
+        placeholder="Buscar..."
         bind:value={busqueda}
         class="input-buscar"
       />
@@ -99,8 +104,12 @@
   .item-zona { background: #27272a; border: 1px solid #3f3f46; color: white; font-weight: bold; padding: 6px; border-radius: 4px; cursor: pointer; }
   .item-zona.activo { background: #3b82f6; border-color: #60a5fa; }
   .item-zona.nueva { border-style: dashed; }
-  .tarjeta-mapa { background: #1f1f23; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px; text-align: center; cursor: pointer; }
-  .previa-mapa { font-size: 16px; }
+  .tarjeta-mapa {
+    background: #1f1f23; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px; text-align: center; cursor: pointer;
+    /* reset de botón para que se vea igual que el div anterior */
+    width: 100%; color: inherit; font: inherit; display: block;
+  }
+  .previa-mapa { font-size: 16px; display: block; }
   .nombre-mapa { font-size: 9px; color: #d4d4d8; display: block; }
   .bloque-abajo { flex: 1; display: flex; flex-direction: column; overflow: hidden; gap: 5px; }
   .sub-busqueda { display: flex; flex-direction: column; gap: 3px; }

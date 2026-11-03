@@ -1,22 +1,25 @@
 <!-- src/routes/componentes/PanelDerecho.svelte -->
 <script>
-  export let instancias = [];
-  export let tiradas = [];
-  export let instanciaSeleccionada = null;
-  export let comandoChat = "";
-  export let onSeleccionarInstancia;
-  export let onModificarVida;
-  export let onEnviarTirada;
+  let {
+    instancias = [],
+    tiradas = [],
+    instanciaSeleccionada = null,
+    comandoChat = $bindable(""),
+    onSeleccionarInstancia,
+    onModificarVida,
+    onEnviarTirada
+  } = $props();
 
   let inputChatRef;
 
+  // Se sigue pudiendo llamar desde el padre con bind:this
   export function enfocarChat() {
     inputChatRef?.focus();
   }
 
-  $: enemigos = instancias.filter(i => i.base.tipo === "Enemigo");
-  $: npcs = instancias.filter(i => i.base.tipo === "NPC");
-  $: jugadores = instancias.filter(i => i.base.tipo === "Jugador");
+  let enemigos = $derived(instancias.filter((i) => i.base.tipo === "Enemigo"));
+  let npcs = $derived(instancias.filter((i) => i.base.tipo === "NPC"));
+  let jugadores = $derived(instancias.filter((i) => i.base.tipo === "Jugador"));
 
   function presionarEnter(e) {
     if (e.key === "Enter" && comandoChat.trim()) {
@@ -33,44 +36,47 @@
     <div class="scroll-fichas">
       <div class="grupo rojo">ENEMIGOS</div>
       {#each enemigos as e}
-        <div 
-          class="fila-ficha" 
+        <button
+          type="button"
+          class="fila-ficha"
           class:muerto={e.vida_actual <= 0}
           class:seleccionado={instanciaSeleccionada?.id_instancia === e.id_instancia}
-          on:click={() => onSeleccionarInstancia(e)}
+          onclick={() => onSeleccionarInstancia(e)}
         >
-          <div class="icono cuadrado"></div>
+          <span class="icono cuadrado"></span>
           <span class="nombre">{e.base.nombre}</span>
           <span class="pv">{e.vida_actual}/{e.base.vida_max}</span>
-        </div>
+        </button>
       {/each}
 
       <div class="grupo azul">NPCs</div>
       {#each npcs as n}
-        <div 
+        <button
+          type="button"
           class="fila-ficha"
           class:muerto={n.vida_actual <= 0}
           class:seleccionado={instanciaSeleccionada?.id_instancia === n.id_instancia}
-          on:click={() => onSeleccionarInstancia(n)}
+          onclick={() => onSeleccionarInstancia(n)}
         >
-          <div class="icono rombo"></div>
+          <span class="icono rombo"></span>
           <span class="nombre">{n.base.nombre}</span>
           <span class="pv">{n.vida_actual}</span>
-        </div>
+        </button>
       {/each}
 
       <div class="grupo verde">JUGADORES</div>
       {#each jugadores as j}
-        <div 
+        <button
+          type="button"
           class="fila-ficha"
           class:muerto={j.vida_actual <= 0}
           class:seleccionado={instanciaSeleccionada?.id_instancia === j.id_instancia}
-          on:click={() => onSeleccionarInstancia(j)}
+          onclick={() => onSeleccionarInstancia(j)}
         >
-          <div class="icono circulo"></div>
+          <span class="icono circulo"></span>
           <span class="nombre">{j.base.nombre}</span>
           <span class="pv">{j.vida_actual}/{j.base.vida_max}</span>
-        </div>
+        </button>
       {/each}
     </div>
   </div>
@@ -105,9 +111,9 @@
         <div class="param vida">
           <span class="label">Vida:</span>
           <div class="control-vida">
-            <button on:click={() => onModificarVida(instanciaSeleccionada, -1)}>-</button>
+            <button onclick={() => onModificarVida(instanciaSeleccionada, -1)}>-</button>
             <span class="valor-destacado">{instanciaSeleccionada.vida_actual} / {instanciaSeleccionada.base.vida_max}</span>
-            <button on:click={() => onModificarVida(instanciaSeleccionada, 1)}>+</button>
+            <button onclick={() => onModificarVida(instanciaSeleccionada, 1)}>+</button>
           </div>
         </div>
       </div>
@@ -132,12 +138,12 @@
 
       <!-- Línea fina separadora y zona de escribir comando -->
       <div class="input-comando-contenedor">
-        <input 
-          type="text" 
+        <input
+          type="text"
           bind:this={inputChatRef}
-          bind:value={comandoChat} 
+          bind:value={comandoChat}
           placeholder="Escribir comando (ej: 2d6 + 3)..."
-          on:keydown={presionarEnter}
+          onkeydown={presionarEnter}
           class="input-chat"
         />
       </div>
@@ -167,10 +173,14 @@
   .grupo.rojo { color: #ef4444; border-color: #ef4444; }
   .grupo.azul { color: #3b82f6; border-color: #3b82f6; }
   .grupo.verde { color: #22c55e; border-color: #22c55e; }
-  .fila-ficha { display: flex; align-items: center; gap: 6px; background: #1f1f23; padding: 4px 6px; border-radius: 4px; cursor: pointer; }
-  .fila-ficha.seleccionado { border: 1px solid #3b82f6; }
+  .fila-ficha {
+    display: flex; align-items: center; gap: 6px; background: #1f1f23; padding: 4px 6px; border-radius: 4px; cursor: pointer;
+    /* reset de botón para que se vea igual que el div anterior */
+    border: 1px solid transparent; width: 100%; color: inherit; font: inherit; text-align: left;
+  }
+  .fila-ficha.seleccionado { border-color: #3b82f6; }
   .fila-ficha.muerto { opacity: 0.35; filter: grayscale(100%); }
-  .icono { width: 10px; height: 10px; }
+  .icono { width: 10px; height: 10px; flex-shrink: 0; }
   .cuadrado { background: #ef4444; }
   .rombo { background: #3b82f6; transform: rotate(45deg); }
   .circulo { background: #22c55e; border-radius: 50%; }

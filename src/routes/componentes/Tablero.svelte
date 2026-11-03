@@ -1,33 +1,38 @@
 <!-- src/routes/componentes/Tablero.svelte -->
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
-  export let mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' };
-  export let rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 };
+  let {
+    mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' },
+    rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 }
+  } = $props();
 
   // Por debajo de este tamaño en pantalla (px) la rejilla no se dibuja: no se ve y solo molesta.
   const PASO_MIN_PX = 5;
   const ZOOM_MIN = 0.1;
   const ZOOM_MAX = 8;
 
+  // Elementos del DOM (solo se usan desde funciones, no hace falta que sean reactivos)
   let contenedor;
   let canvasFondo;
   let canvasRejilla;
 
   // Tamaño visible del tablero (px CSS) y densidad de píxeles de la pantalla.
-  let ancho = 0;
-  let alto = 0;
-  let dpr = 1;
+  let ancho = $state(0);
+  let alto = $state(0);
+  let dpr = $state(1);
 
   // Cámara: pantalla = mundo * zoom + (x, y). El "mundo" es el mapa en sus píxeles originales.
-  let cam = { x: 0, y: 0, zoom: 1 };
+  // $state.raw: no se convierte en proxy; se actualiza sustituyendo el objeto entero.
+  let cam = $state.raw({ x: 0, y: 0, zoom: 1 });
 
-  let imagenFondo = null;
+  // Un <img> del DOM no debe volverse proxy: $state.raw.
+  let imagenFondo = $state.raw(null);
   let urlActual = null;
   let tokenCarga = 0;
 
-  let panActivo = false;
+  let panActivo = $state(false);
   let ultimo = { x: 0, y: 0 };
 
   const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
@@ -39,9 +44,13 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Carga del fondo
+  // Carga del fondo: se repite cuando cambia el mapa
   // ---------------------------------------------------------------------------
-  $: if (mapa) cargarFondo(mapa.url_imagen_fondo || '');
+  $effect(() => {
+    const url = mapa?.url_imagen_fondo || '';
+    // untrack: dentro leemos ancho/alto/etc. y no queremos que sean dependencias de este efecto
+    untrack(() => cargarFondo(url));
+  });
 
   function cargarFondo(url) {
     if (url === urlActual) {
@@ -82,7 +91,7 @@
   }
 
   function alRueda(e) {
-    e.preventDefault();
+    e.preventDefault(); // en Svelte 5 onwheel no es pasivo, así que esto funciona
     const r = contenedor.getBoundingClientRect();
     const px = e.clientX - r.left;
     const py = e.clientY - r.top;
@@ -114,41 +123,62 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Pintado: cada capa se redibuja solo cuando cambia lo suyo, y como mucho 1 vez por frame
+  // Pintado: cada capa se redibuja solo cuando cambia lo suyo, y como mucho 1 vez por frame.
+  // Los efectos solo anotan "qué hay que pintar"; el pintado real ocurre en requestAnimationFrame.
   // ---------------------------------------------------------------------------
-  const pendiente = { fondo: false, rejilla: false };
+  const pendiente = { fondo: null, rejilla: null };
   let rafId = 0;
 
-  // Los argumentos extra solo sirven para que Svelte sepa de qué depende cada capa.
-  $: pedir('fondo', imagenFondo, mapa, cam, ancho, alto);
-  $: pedir('rejilla', rejilla, imagenFondo, mapa, cam, ancho, alto);
-
-  function pedir(capa, ..._dependencias) {
-    pendiente[capa] = true;
+  function programar() {
     if (!rafId) rafId = requestAnimationFrame(pintar);
   }
 
+  // Depende de: imagen, mapa, cámara y tamaño del tablero.
+  $effect(() => {
+    const { w, h } = dimsMundo();
+    pendiente.fondo = { img: imagenFondo, w, h, cam, ancho, alto, dpr };
+    programar();
+  });
+
+  // Depende de lo anterior (salvo la imagen en sí) y de los ajustes de la rejilla.
+  $effect(() => {
+    const { w, h } = dimsMundo();
+    pendiente.rejilla = {
+      w, h, cam, ancho, alto, dpr,
+      estilo: {
+        visible: rejilla.visible,
+        tamano: rejilla.tamano,
+        color: rejilla.color,
+        grosor: rejilla.grosor,
+        opacidad: rejilla.opacidad
+      }
+    };
+    programar();
+  });
+
   function pintar() {
     rafId = 0;
-    if (!canvasFondo || !canvasRejilla || !ancho || !alto) return;
+    if (!canvasFondo || !canvasRejilla) return;
 
-    if (pendiente.fondo) {
-      pendiente.fondo = false;
-      pintarFondo();
+    const f = pendiente.fondo;
+    if (f && f.ancho && f.alto) {
+      pendiente.fondo = null;
+      pintarFondo(f);
     }
-    if (pendiente.rejilla) {
-      pendiente.rejilla = false;
-      const ctx = prepararCanvas(canvasRejilla);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // la rejilla se dibuja en px de pantalla
-      const { w, h } = dimsMundo();
-      dibujarRejilla(ctx, cam, w, h, ancho, alto, rejilla);
+
+    const r = pendiente.rejilla;
+    if (r && r.ancho && r.alto) {
+      pendiente.rejilla = null;
+      const ctx = prepararCanvas(canvasRejilla, r.ancho, r.alto, r.dpr);
+      ctx.setTransform(r.dpr, 0, 0, r.dpr, 0, 0); // la rejilla se dibuja en px de pantalla
+      dibujarRejilla(ctx, r.cam, r.w, r.h, r.ancho, r.alto, r.estilo);
     }
   }
 
   // Ajusta el tamaño real del canvas a la pantalla (nítido en HiDPI) y lo limpia.
-  function prepararCanvas(canvas) {
-    const w = Math.round(ancho * dpr);
-    const h = Math.round(alto * dpr);
+  function prepararCanvas(canvas, anchoCss, altoCss, densidad) {
+    const w = Math.round(anchoCss * densidad);
+    const h = Math.round(altoCss * densidad);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
@@ -159,16 +189,15 @@
     return ctx;
   }
 
-  function pintarFondo() {
-    const ctx = prepararCanvas(canvasFondo);
-    const { w, h } = dimsMundo();
-    ctx.setTransform(dpr * cam.zoom, 0, 0, dpr * cam.zoom, dpr * cam.x, dpr * cam.y);
-    if (imagenFondo) {
+  function pintarFondo(f) {
+    const ctx = prepararCanvas(canvasFondo, f.ancho, f.alto, f.dpr);
+    ctx.setTransform(f.dpr * f.cam.zoom, 0, 0, f.dpr * f.cam.zoom, f.dpr * f.cam.x, f.dpr * f.cam.y);
+    if (f.img) {
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(imagenFondo, 0, 0, w, h);
+      ctx.drawImage(f.img, 0, 0, f.w, f.h);
     } else {
       ctx.fillStyle = '#1e1e1e';
-      ctx.fillRect(0, 0, w, h);
+      ctx.fillRect(0, 0, f.w, f.h);
     }
   }
 
@@ -228,8 +257,8 @@
 
   onMount(() => {
     const observador = new ResizeObserver(([entrada]) => {
-      dpr = window.devicePixelRatio || 1;
       const primera = !ancho;
+      dpr = window.devicePixelRatio || 1;
       ancho = Math.floor(entrada.contentRect.width);
       alto = Math.floor(entrada.contentRect.height);
       if (primera) ajustarVista();
@@ -245,17 +274,17 @@
 
 <div
   class="tablero"
-  role="application"
-  aria-label="Tablero de juego"
   class:arrastrando={panActivo}
   bind:this={contenedor}
-  on:wheel|nonpassive={alRueda}
-  on:pointerdown={alPresionar}
-  on:pointermove={alMover}
-  on:pointerup={alSoltar}
-  on:pointercancel={alSoltar}
-  on:dblclick={() => ajustarVista()}
+  role="application"
+  aria-label="Tablero de juego"
   title="Rueda: zoom · Arrastrar: mover · Doble clic: centrar"
+  onwheel={alRueda}
+  onpointerdown={alPresionar}
+  onpointermove={alMover}
+  onpointerup={alSoltar}
+  onpointercancel={alSoltar}
+  ondblclick={() => ajustarVista()}
 >
   <canvas bind:this={canvasFondo}></canvas>
   <canvas bind:this={canvasRejilla}></canvas>

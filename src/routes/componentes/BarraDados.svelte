@@ -1,37 +1,35 @@
 <!-- src/routes/componentes/BarraDados.svelte -->
 <script>
-  export let onSumarAlChat;
-  export let onRestarDelChat;
-  export let onLanzarTirada;
+  let { onSumarAlChat, onRestarDelChat, onLanzarTirada } = $props();
 
-  let bonificador = 0;
+  let bonificador = $state(0);
 
-  let dados = [
+  // $state es profundo: modificar d.cantidad ya actualiza la pantalla, sin reasignar el array.
+  let dados = $state([
     { tipo: "d4", cantidad: 1, color: "#22c55e" },
     { tipo: "d6", cantidad: 1, color: "#06b6d4" },
     { tipo: "d8", cantidad: 1, color: "#8b5cf6" },
     { tipo: "d10", cantidad: 1, color: "#ec4899" },
     { tipo: "d12", cantidad: 1, color: "#f97316" },
     { tipo: "d20", cantidad: 1, color: "#eab308" }
-  ];
+  ]);
 
   function rueda(e, d) {
     e.preventDefault();
     if (e.deltaY < 0) d.cantidad++;
     else if (d.cantidad > 1) d.cantidad--;
-    dados = [...dados];
   }
 </script>
 
 <div class="barra-dados">
   <div class="zona-dados">
     {#each dados as d}
-      <button 
-        class="boton-dado" 
+      <button
+        class="boton-dado"
         style="border-color: {d.color};"
-        on:wheel={(e) => rueda(e, d)}
-        on:click={() => onSumarAlChat(`${d.cantidad}${d.tipo}`)}
-        on:contextmenu={(e) => { e.preventDefault(); onRestarDelChat(`${d.cantidad}${d.tipo}`); }}
+        onwheel={(e) => rueda(e, d)}
+        onclick={() => onSumarAlChat(`${d.cantidad}${d.tipo}`)}
+        oncontextmenu={(e) => { e.preventDefault(); onRestarDelChat(`${d.cantidad}${d.tipo}`); }}
         title="Rueda: cantidad | Clic: sumar | Clic derecho: restar"
       >
         <span class="cant">{d.cantidad}x</span>
@@ -45,7 +43,7 @@
     <input type="number" bind:value={bonificador} />
   </div>
 
-  <button class="btn-tirar" on:click={() => onLanzarTirada(bonificador)}>
+  <button class="btn-tirar" onclick={() => onLanzarTirada(bonificador)}>
     TIRAR
   </button>
 </div>
