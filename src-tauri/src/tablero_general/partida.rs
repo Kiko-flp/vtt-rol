@@ -11,7 +11,12 @@ use crate::tablero_general::modelos::*;
 pub enum DeltaPartida {
     TiradaRealizada(Tiradas),
     VidaModificada { id_instancia: u16, delta: i16 },
-    // En el futuro aquí añadirás:
+    ZonaCreada(Zona),
+    ZonaEliminada(Zona),
+    ZonaModificada(Zona),
+    MapaCreado(Zona, Mapa),
+    MapaModificado(Mapa),
+    MapaBorrado(Mapa)
     // EntidadMovida { id_instancia: u16, x: i16, y: i16 },
     // ZonaCreada(Zona),
 }
@@ -49,6 +54,98 @@ impl EstadoPartida {
                 if let Some(inst) = self.instancias_activas.iter_mut().find(|i| i.id_instancia == *id_instancia) {
                     inst.vida_actual += delta;
                 }
+            }
+            DeltaPartida::ZonaCreada(zona) => {
+                if let Some(pos) = self.zonas.iter().position(|z| z.id == zona.id) {
+                    self.zonas[pos] = zona.clone();
+                } else {
+                    self.zonas.push(zona.clone());
+                }
+            }
+            DeltaPartida::ZonaEliminada(zona) => {
+                // 1. Sacamos los IDs de los mapas que pertenecían a esta zona
+                let mapas_eliminados: Vec<u16> = self
+                    .mapas
+                    .iter()
+                    .filter(|m| m.id_zona == zona.id)
+                    .map(|m| m.id)
+                    .collect();
+
+                // 2. Eliminamos la zona y sus mapas
+                self.zonas.retain(|z| z.id != zona.id);
+                self.mapas.retain(|m| m.id_zona != zona.id);
+
+                // 3. Procesamos las instancias activas
+                self.instancias_activas.retain_mut(|inst| {
+                    let estaba_en_mapa_afectado = inst
+                        .id_mapa
+                        .map_or(false, |id_m| mapas_eliminados.contains(&id_m));
+                    let pertenece_a_zona = inst.base.zona_id == zona.id;
+
+                    // Si la instancia estaba en un mapa de la zona o pertenece a la zona
+                    if estaba_en_mapa_afectado || pertenece_a_zona {
+                        if inst.base.es_unico {
+                            // ES ÚNICA: La conservamos viva en memoria pero sin mapa y desactivada
+                            if estaba_en_mapa_afectado {
+                                inst.id_mapa = None;
+                                inst.coordenadas = Coordenada::NoPuesto;
+                            }
+                            inst.activo = false;
+                            true // Conservar en el vector
+                        } else {
+                            // NO ES ÚNICA: Se elimina por completo
+                            false // Descartar del vector
+                        }
+                    } else {
+                        true // No afectada por esta zona
+                    }
+                });
+
+                // 4. En el banco de entidades, conservamos las únicas (jugadores/NPCs clave)
+                self.banco_entidades.retain(|ent| ent.es_unico || ent.zona_id != zona.id);
+            }
+            DeltaPartida::ZonaModificada(zona) => {
+                if let Some(pos) = self.zonas.iter().position(|z| z.id == zona.id) {
+                    self.zonas[pos] = zona.clone();
+                }
+            }
+            DeltaPartida::MapaCreado(zona, mapa) => {
+                let mut nuevo_mapa = mapa.clone();
+                // Aseguramos que el id_zona pertenezca a la zona recibida
+                nuevo_mapa.id_zona = zona.id;
+
+                if let Some(pos) = self.mapas.iter().position(|m| m.id == nuevo_mapa.id) {
+                    self.mapas[pos] = nuevo_mapa;
+                } else {
+                    self.mapas.push(nuevo_mapa);
+                }
+            }
+            DeltaPartida::MapaModificado(mapa) => {
+                if let Some(pos) = self.mapas.iter().position(|m| m.id == mapa.id) {
+                    self.mapas[pos] = mapa.clone();
+                }
+            }
+            DeltaPartida::MapaBorrado(mapa) => {
+                // 1. Elimina el mapa
+                self.mapas.retain(|m| m.id != mapa.id);
+
+                // 2. Gestiona las instancias que estaban en ese mapa
+                self.instancias_activas.retain_mut(|inst| {
+                    if inst.id_mapa == Some(mapa.id) {
+                        if inst.base.es_unico {
+                            // ES ÚNICA: Conservar, pero retirar del mapa y desactivar
+                            inst.id_mapa = None;
+                            inst.activo = false;
+                            inst.coordenadas = Coordenada::NoPuesto;
+                            true // Conservar
+                        } else {
+                            // NO ES ÚNICA: Se destruye
+                            false // Eliminar
+                        }
+                    } else {
+                        true // Pertenecía a otro mapa (o ya no tenía mapa)
+                    }
+                });
             }
         }
     }
@@ -245,7 +342,6 @@ pub fn obtener_instancias_activas(state: State<'_, AppState>) -> Vec<Instancia> 
     state.0.lock().unwrap().instancias_activas.clone()
 }
 
-// COMANDO TAURI: Solo lectura para cuando el frontend pulse las flechas
 #[tauri::command]
 pub async fn obtener_historial_personal() -> Vec<String> {
     if let Ok(contenido) = tokio::fs::read_to_string(ARCHIVO_HISTORIAL_PERSONAL).await {
@@ -257,4 +353,36 @@ pub async fn obtener_historial_personal() -> Vec<String> {
     } else {
         Vec::new()
     }
+}
+
+#[tauri::command]
+pub fn crear_zona(zona: Zona, state: State<'_, AppState>) {
+    procesar_delta(&state, DeltaPartida::ZonaCreada(zona));
+}
+
+#[tauri::command]
+pub fn eliminar_zona(zona: Zona, state: State<'_, AppState>) {
+    procesar_delta(&state, DeltaPartida::ZonaEliminada(zona));
+}
+
+#[tauri::command]
+pub fn modificar_zona(zona: Zona, state: State<'_, AppState>) {
+    procesar_delta(&state, DeltaPartida::ZonaModificada(zona));
+}
+
+#[tauri::command]
+pub fn crear_mapa(zona: Zona, mut mapa: Mapa, state: State<'_, AppState>) {
+    // Sincronizamos el id_zona antes de emitir el delta
+    mapa.id_zona = zona.id;
+    procesar_delta(&state, DeltaPartida::MapaCreado(zona, mapa));
+}
+
+#[tauri::command]
+pub fn modificar_mapa(mapa: Mapa, state: State<'_, AppState>) {
+    procesar_delta(&state, DeltaPartida::MapaModificado(mapa));
+}
+
+#[tauri::command]
+pub fn borrar_mapa(mapa: Mapa, state: State<'_, AppState>) {
+    procesar_delta(&state, DeltaPartida::MapaBorrado(mapa));
 }

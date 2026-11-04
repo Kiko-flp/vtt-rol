@@ -8,7 +8,8 @@ use tablero_general::dados::tirar_dado;
 use tablero_general::partida::{
     compactar_partida, iniciar_autoguardado, // <-- Importamos ambas
     obtener_banco_entidades, obtener_historial_personal, obtener_historial_tiradas,
-    obtener_instancias_activas, obtener_mapas_zona, obtener_zonas, AppState, EstadoPartida,
+    obtener_instancias_activas, obtener_mapas_zona, obtener_zonas, crear_zona, eliminar_zona,
+    modificar_zona, crear_mapa, modificar_mapa, borrar_mapa, AppState, EstadoPartida,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -36,7 +37,13 @@ pub fn run() {
             obtener_banco_entidades,
             obtener_instancias_activas,
             obtener_historial_tiradas,
-            obtener_historial_personal
+            obtener_historial_personal,
+            crear_zona,
+            eliminar_zona,
+            modificar_zona, 
+            crear_mapa, 
+            modificar_mapa, 
+            borrar_mapa,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

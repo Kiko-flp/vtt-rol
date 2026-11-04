@@ -44,18 +44,20 @@ pub struct Entidad {
     // Si falta en el JSON, se asume lista vacía []
     #[serde(default)]
     pub archivos_adjuntos: Vec<Option<String>>,
+
+    #[serde(default)]
+    pub es_unico: bool,
 }
 
 // Representa una instancia de una entidad en el mapa
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Instancia {
     pub id_instancia: u16,
-    pub id_mapa: u16,
+    pub id_mapa: Option<u16>,
     pub base: Entidad,
     pub vida_actual: i16,
     pub coordenadas: Coordenada,
 
-    // Si no viene en el JSON, se asume false (o true según default)
     #[serde(default)]
     pub activo: bool,
 }
@@ -75,7 +77,8 @@ pub struct Zona {
 pub struct Mapa {
     pub id: u16,
     pub id_zona: u16,
-
+    #[serde(default)]
+    pub nombre: String,
     // El mapa puede no tener imagen asignada (en JS llegará como string o null)
     #[serde(default)]
     pub url_imagen_fondo: Option<String>,

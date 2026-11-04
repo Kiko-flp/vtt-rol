@@ -138,6 +138,7 @@
       const horaStr = ahora.toTimeString().slice(0, 5);
 
       historialTiradas.unshift({
+        id: Date.now(),
         hora: horaStr,
         comando: desglose,
         total: total
@@ -150,6 +151,7 @@
       comandoChat = "";
     } catch (err) {
       historialTiradas.unshift({
+        id: Date.now(),
         hora: horaStr,
         comando: "tirada no válida",
         total: ""
