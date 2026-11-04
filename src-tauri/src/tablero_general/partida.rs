@@ -356,8 +356,22 @@ pub async fn obtener_historial_personal() -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn crear_zona(zona: Zona, state: State<'_, AppState>) {
-    procesar_delta(&state, DeltaPartida::ZonaCreada(zona));
+pub fn crear_zona(state: State<'_, AppState>) -> Zona {
+    let (nuevo_id, nuevo_orden) = {
+        let lock = state.0.lock().unwrap();
+        let id = lock.zonas.iter().map(|z| z.id).max().unwrap_or(0) + 1;
+        let orden = lock.zonas.iter().map(|z| z.orden).max().map(|o| o + 1).unwrap_or(0);
+        (id, orden)
+    };
+
+    let nueva_zona = Zona {
+        id: nuevo_id,
+        nombre: format!("Zona {}", nuevo_id),
+        orden: nuevo_orden,
+    };
+
+    procesar_delta(&state, DeltaPartida::ZonaCreada(nueva_zona.clone()));
+    nueva_zona
 }
 
 #[tauri::command]
@@ -371,10 +385,49 @@ pub fn modificar_zona(zona: Zona, state: State<'_, AppState>) {
 }
 
 #[tauri::command]
-pub fn crear_mapa(zona: Zona, mut mapa: Mapa, state: State<'_, AppState>) {
-    // Sincronizamos el id_zona antes de emitir el delta
-    mapa.id_zona = zona.id;
-    procesar_delta(&state, DeltaPartida::MapaCreado(zona, mapa));
+pub fn crear_mapa(
+    id_zona: u16,
+    url_imagen_fondo: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Mapa, String> {
+    let (zona, nuevo_id, nuevo_orden) = {
+        let lock = state.0.lock().unwrap();
+        let z = lock
+            .zonas
+            .iter()
+            .find(|z| z.id == id_zona)
+            .cloned()
+            .ok_or_else(|| format!("La zona {} no existe", id_zona))?;
+
+        // ID secuencial global para evitar cualquier colisión entre zonas
+        let id = lock.mapas.iter().map(|m| m.id).max().unwrap_or(0) + 1;
+        let orden = lock
+            .mapas
+            .iter()
+            .filter(|m| m.id_zona == id_zona)
+            .map(|m| m.orden)
+            .max()
+            .map(|o| o + 1)
+            .unwrap_or(0);
+
+        (z, id, orden)
+    };
+
+    let nuevo_mapa = Mapa {
+        id: nuevo_id,
+        id_zona,
+        nombre: nuevo_id.to_string(), // Nombre por defecto es su propio ID
+        url_imagen_fondo,
+        ancho: 1000,
+        alto: 1000,
+        rejilla: 50,
+        color_opacidad: vec![255, 255, 255, 76],
+        grosor: 1,
+        orden: nuevo_orden,
+    };
+
+    procesar_delta(&state, DeltaPartida::MapaCreado(zona, nuevo_mapa.clone()));
+    Ok(nuevo_mapa)
 }
 
 #[tauri::command]

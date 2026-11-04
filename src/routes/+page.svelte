@@ -17,16 +17,27 @@
   let historialTiradas = $state([]);
 
   let zonaSeleccionadaId = $state(1);
-  let mapaActual = $state({ ancho: 1000, alto: 1000, rejilla: 40, grosor: 1 });
+  let mapaActual = $state({
+    id: 1,
+    id_zona: 1,
+    url_imagen_fondo: "",
+    ancho: 1000,
+    alto: 1000,
+    rejilla: 50,
+    color_opacidad: [255, 255, 255, 76],
+    grosor: 1,
+    orden: 0
+  });
+
   let instanciaSeleccionada = $state(null);
   let fichaParaEditar = $state(null);
 
   let comandoChat = $state("");
-  let panelDerechoRef; // bind:this: solo se usa desde funciones
+  let panelDerechoRef;
 
   let rejilla = $state({
     visible: true,
-    tamano: 40,
+    tamano: 50,
     color: "#ffffff",
     grosor: 1,
     opacidad: 0.3
@@ -34,9 +45,11 @@
 
   onMount(async () => {
     try {
-      zonas = await invoke("obtener_zonas");
-      mapas = await invoke("obtener_mapas_zona", { zonaId: 1 });
-      if (mapas.length > 0) aplicarMapa(mapas[0]);
+      await recargarZonas();
+      if (zonas.length > 0) {
+        zonaSeleccionadaId = zonas[0].id;
+      }
+      await recargarMapas(zonaSeleccionadaId);
       bancoEntidades = await invoke("obtener_banco_entidades");
       instanciasActivas = await invoke("obtener_instancias_activas");
       historialTiradas = await invoke("obtener_historial_tiradas");
@@ -45,30 +58,52 @@
     }
   });
 
+  async function recargarZonas() {
+    zonas = await invoke("obtener_zonas");
+  }
+
+  async function recargarMapas(idZona) {
+    mapas = await invoke("obtener_mapas_zona", { zonaId: idZona });
+    if (mapas.length > 0) {
+      // Si el mapa actual ya no existe o cambió de zona, cargamos el primero
+      if (!mapas.some((m) => m.id === mapaActual?.id)) {
+        aplicarMapa(mapas[0]);
+      }
+    }
+  }
+
+  let barraRejillaRef;
+
   async function cambiarZona(id) {
+    // Si había cambios pendientes en la rejilla, se guardan en el acto
+    await barraRejillaRef?.forzarGuardadoInmediato();
     zonaSeleccionadaId = id;
-    mapas = await invoke("obtener_mapas_zona", { zonaId: id });
-    if (mapas.length > 0) aplicarMapa(mapas[0]);
+    await recargarMapas(id);
   }
 
   function aplicarMapa(m) {
     mapaActual = m;
-    // Con $state, basta con asignar: ya no hace falta rejilla = { ...rejilla }
     rejilla.tamano = m.rejilla;
     rejilla.grosor = m.grosor;
-    rejilla.opacidad = m.color_opacidad[3] / 255;
+    if (m.color_opacidad && m.color_opacidad.length >= 4) {
+      rejilla.opacidad = m.color_opacidad[3] / 255;
+      rejilla.color =
+        "#" +
+        m.color_opacidad
+          .slice(0, 3)
+          .map((v) => v.toString(16).padStart(2, "0"))
+          .join("");
+    }
   }
 
   function actualizarDadoEnChat(fragmento, esSuma) {
-    // Captura cantidad, caras y los sufijos (!, adv)
     const matchFrag = fragmento.match(/^(\d*)d(\d+)([!a-z]*)$/i);
     if (!matchFrag) return;
 
     const delta = (matchFrag[1] ? parseInt(matchFrag[1]) : 1) * (esSuma ? 1 : -1);
     const caras = matchFrag[2];
-    const sufijos = matchFrag[3] || ""; // ej: "!", "adv", "!adv" o ""
+    const sufijos = matchFrag[3] || "";
 
-    // Escapamos los signos para el RegExp
     const sufijosEscapados = sufijos.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const regex = new RegExp(`(^|[+-])\\s*(\\d*)d${caras}${sufijosEscapados}(?=\\s|[+-]|$)`, "i");
     const match = comandoChat.match(regex);
@@ -125,20 +160,15 @@
     comandoChat = "";
   }
 
-  // En src/routes/+page.svelte
   async function procesarTirada(cmd) {
     if (!cmd || !cmd.trim()) return;
-
-    // Solo invocas tirar_dado. Rust se encarga de guardar tanto en la partida como en el historial personal.
     try {
       const res = await invoke("tirar_dado", { comando: cmd.trim() });
       const [desglose, total] = res.split(" = ");
-
       const ahora = new Date();
       const horaStr = ahora.toTimeString().slice(0, 5);
 
       historialTiradas.unshift({
-        id: Date.now(),
         hora: horaStr,
         comando: desglose,
         total: total
@@ -147,12 +177,10 @@
       if (historialTiradas.length > 20) {
         historialTiradas.pop();
       }
-
       comandoChat = "";
-    } catch (err) {
+    } catch {
       historialTiradas.unshift({
-        id: Date.now(),
-        hora: horaStr,
+        hora: new Date().toTimeString().slice(0, 5),
         comando: "tirada no válida",
         total: ""
       });
@@ -160,7 +188,6 @@
   }
 
   function modificarVida(inst, delta) {
-    // $state es profundo: modificar el campo ya actualiza la pantalla, sin copiar el array
     inst.vida_actual += delta;
   }
 </script>
@@ -171,13 +198,16 @@
     {mapas}
     banco={bancoEntidades}
     {zonaSeleccionadaId}
+    {mapaActual}
     onSeleccionarZona={cambiarZona}
     onSeleccionarMapa={aplicarMapa}
+    onRecargarZonas={recargarZonas}
+    onRecargarMapas={recargarMapas}
   />
 
   <main class="area-central">
     <div class="barra-superior">
-      <BarraRejilla bind:rejilla />
+      <BarraRejilla bind:this={barraRejillaRef} bind:rejilla {mapaActual} />
     </div>
 
     <div class="contenedor-lienzo">
@@ -224,4 +254,24 @@
   .contenedor-lienzo { flex: 1; width: 100%; height: 100%; }
   .barra-superior { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10; }
   .barra-inferior { position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%); z-index: 10; }
+
+  /* Scrollbar ultrafina global */
+  :global(*) {
+    scrollbar-width: thin;
+    scrollbar-color: #3f3f46 transparent;
+  }
+  :global(*::-webkit-scrollbar) {
+    width: 4px;
+    height: 4px;
+  }
+  :global(*::-webkit-scrollbar-track) {
+    background: transparent;
+  }
+  :global(*::-webkit-scrollbar-thumb) {
+    background: #3f3f46;
+    border-radius: 4px;
+  }
+  :global(*::-webkit-scrollbar-thumb:hover) {
+    background: #71717a;
+  }
 </style>

@@ -1,6 +1,6 @@
 <!-- src/routes/componentes/Tablero.svelte -->
 <script>
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, onDestroy } from 'svelte';
   import { convertFileSrc } from '@tauri-apps/api/core';
 
   let {
@@ -48,36 +48,76 @@
   // ---------------------------------------------------------------------------
   $effect(() => {
     const url = mapa?.url_imagen_fondo || '';
-    // untrack: dentro leemos ancho/alto/etc. y no queremos que sean dependencias de este efecto
     untrack(() => cargarFondo(url));
   });
 
+  // La memoria solo se destruye al cerrar el tablero, no en cada cambio de mapa
+  onDestroy(() => {
+    liberarMemoriaImagen();
+  });
+
+  function liberarMemoriaImagen() {
+    if (imagenFondo) {
+      // Desvincular eventos primero para evitar bucle infinito de onerror en WebView2
+      imagenFondo.onload = null;
+      imagenFondo.onerror = null;
+      imagenFondo.src = '';
+      imagenFondo = null;
+    }
+  }
+
   function cargarFondo(url) {
-    if (url === urlActual) {
-      ajustarVista(); // mismo fondo, pero puede ser otro mapa con otras dimensiones
+    // Si la URL es la misma Y la imagen ya está en memoria, la reutilizamos (0% CPU, 0 MB extra)
+    if (url === urlActual && imagenFondo) {
+      ajustarVista();
       return;
     }
+
     urlActual = url;
-    const mio = ++tokenCarga; // si el usuario cambia de mapa rápido, ignoramos cargas viejas
+    const mio = ++tokenCarga;
+
+    // Liberamos la imagen anterior limpiando sus listeners
+    liberarMemoriaImagen();
 
     if (!url) {
-      imagenFondo = null;
       ajustarVista();
       return;
     }
 
     const img = new Image();
-    img.onload = () => {
-      if (mio !== tokenCarga) return;
+    img.decoding = 'async';
+
+    img.onload = async () => {
+      if (mio !== tokenCarga) {
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
+        return;
+      }
+      try {
+        await img.decode();
+      } catch {
+        // Ignorar si decode() ya terminó
+      }
+      if (mio !== tokenCarga) {
+        img.onload = null;
+        img.onerror = null;
+        img.src = '';
+        return;
+      }
       imagenFondo = img;
       ajustarVista();
     };
+
     img.onerror = () => {
       if (mio !== tokenCarga) return;
+      img.onload = null;
+      img.onerror = null;
       imagenFondo = null;
       ajustarVista();
     };
-    img.src = url.startsWith('http') ? url : convertFileSrc(url);
+
+    img.src = url.startsWith('http') || url.startsWith('data:') ? url : convertFileSrc(url);
   }
 
   // ---------------------------------------------------------------------------

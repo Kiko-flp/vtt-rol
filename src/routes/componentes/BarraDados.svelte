@@ -107,7 +107,8 @@
   
   .zona-modificadores {
     display: flex;
-    gap: 6px;
+    flex-direction: column;
+    gap: 0px;
     border-left: 1px solid #3f3f46;
     border-right: 1px solid #3f3f46;
     padding: 0 8px;
@@ -115,7 +116,7 @@
   .check-label {
     display: flex;
     align-items: center;
-    gap: 3px;
+    gap: 2px;
     font-size: 10px;
     font-weight: bold;
     color: #e4e4e7;
