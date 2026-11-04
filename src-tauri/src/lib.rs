@@ -1,13 +1,15 @@
 // src-tauri/src/lib.rs
 mod tablero_general;
 
-use tablero_general::partida::{
-    obtener_banco_entidades, obtener_historial_tiradas, obtener_instancias_activas,
-    obtener_mapas_zona, obtener_zonas, AppState, EstadoPartida,
-    obtener_historial_personal // <-- Solo necesitamos este
-};
-use tablero_general::dados::tirar_dado;
 use std::sync::Mutex;
+use tauri::Manager;
+
+use tablero_general::dados::tirar_dado;
+use tablero_general::partida::{
+    compactar_partida, iniciar_autoguardado, // <-- Importamos ambas
+    obtener_banco_entidades, obtener_historial_personal, obtener_historial_tiradas,
+    obtener_instancias_activas, obtener_mapas_zona, obtener_zonas, AppState, EstadoPartida,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -16,6 +18,17 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(AppState(Mutex::new(estado_inicial)))
+        // INICIAMOS EL TEMPORIZADOR DE 10 MINUTOS EN SEGUNDO PLANO
+        .setup(|app| {
+            iniciar_autoguardado(app.handle().clone());
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                let state = window.state::<AppState>();
+                compactar_partida(&state);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             tirar_dado,
             obtener_zonas,
@@ -23,7 +36,7 @@ pub fn run() {
             obtener_banco_entidades,
             obtener_instancias_activas,
             obtener_historial_tiradas,
-            obtener_historial_personal // <-- Solo lectura
+            obtener_historial_personal
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

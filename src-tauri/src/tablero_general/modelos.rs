@@ -93,7 +93,6 @@ pub struct Mapa {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Tiradas {
-    pub id: u16,
     pub total: i16,
     pub comando: String,
     pub hora: String,

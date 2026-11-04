@@ -3,7 +3,6 @@
   let { onSumarAlChat, onRestarDelChat, onLanzarTirada } = $props();
 
   let bonificador = $state(0);
-  let esExplosivo = $state(false);
   let esVentaja = $state(false);
   let esDesventaja = $state(false);
 
@@ -34,7 +33,6 @@
 
   function formatearDado(d) {
     let sufijo = "";
-    if (esExplosivo) sufijo += "!";
     if (esVentaja) sufijo += "adv";
     if (esDesventaja) sufijo += "desv";
     return `${d.cantidad}${d.tipo}${sufijo}`;

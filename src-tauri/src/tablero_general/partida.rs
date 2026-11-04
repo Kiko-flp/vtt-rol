@@ -1,5 +1,5 @@
 use std::sync::Mutex;
-use tauri::State;
+use tauri::{State, AppHandle, Manager};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 use crate::tablero_general::modelos::*;
@@ -119,13 +119,7 @@ pub fn registrar_tirada(state: &State<'_, AppState>, resultado: &str) {
 
     let hora_actual = chrono::Local::now().format("%H:%M").to_string();
 
-    let id = {
-        let lock = state.0.lock().unwrap();
-        (lock.historial_tiradas.len() as u16) + 1
-    };
-
     let tirada = Tiradas {
-        id,
         total: total_num,
         comando: desglose,
         hora: hora_actual,
@@ -176,9 +170,56 @@ pub fn registrar_comando_personal(comando: &str) {
     });
 }
 
+// Vuelca la memoria RAM a partida.json y resetea deltas.jsonl
+// En src-tauri/src/tablero_general/partida.rs
+
+// COMPACTACIÓN BLINDADA (Usa archivo temporal para evitar corrupción si hay un corte)
+pub fn compactar_partida(state: &AppState) {
+    let lock = state.0.lock().unwrap();
+
+    if let Ok(json) = serde_json::to_string_pretty(&*lock) {
+        // 1. Escribimos en el archivo temporal primero
+        if std::fs::write("partida.json.tmp", json).is_ok() {
+            // 2. Renombrado atómico: sustituye partida.json de golpe y de forma 100% segura
+            if std::fs::rename("partida.json.tmp", "partida.json").is_ok() {
+                // 3. Solo cuando partida.json está confirmado a salvo, limpiamos deltas.jsonl
+                let _ = std::fs::remove_file("deltas.jsonl");
+            }
+        }
+    }
+}
+
+// BUCLE DE AUTOGUARDADO CADA 10 MINUTOS
+pub fn iniciar_autoguardado(app_handle: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        // 10 minutos = 600 segundos
+        let mut intervalo = tokio::time::interval(std::time::Duration::from_secs(600));
+        
+        // El primer tick se consume de inmediato al iniciar, lo descartamos
+        intervalo.tick().await;
+
+        loop {
+            intervalo.tick().await; // Espera 10 minutos de forma no bloqueante
+            
+            // Si la aplicación sigue abierta y el estado existe, compacta
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                compactar_partida(&state);
+            }
+        }
+    });
+}
+
 // ========================================================
 // 4. COMANDOS DE LECTURA (Leen de RAM instantáneamente)
 // ========================================================
+
+// Comando opcional por si se implementa botón de guardar partida
+#[tauri::command]
+pub async fn _guardar_partida(state: State<'_, AppState>) -> Result<(), String> {
+    compactar_partida(&state);
+    Ok(())
+}
+
 #[tauri::command]
 pub fn obtener_historial_tiradas(state: State<'_, AppState>) -> Vec<Tiradas> {
     state.0.lock().unwrap().historial_tiradas.clone()
