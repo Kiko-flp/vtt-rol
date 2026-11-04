@@ -13,20 +13,20 @@
 
   let {
     rejilla = $bindable(),
-    mapaActual = null
+    mapaActual = null,
+    onActualizarMapa
   }: {
     rejilla: Rejilla;
     mapaActual?: any;
+    onActualizarMapa?: (mapaModificado: any) => void;
   } = $props();
 
   const TAMANO_MIN = 5;
   const TAMANO_MAX = 300;
-  const TAMANO_DEFECTO = 40;
 
   let barraRef: HTMLDivElement | null = $state(null);
   let temporizadorGuardado: ReturnType<typeof setTimeout> | null = null;
   let hayCambiosPendientes = false;
-  let mapaActivoCopia: any = null;
 
   function hexToRgba(hex: string, opacidad: number): number[] {
     const limpio = hex.replace("#", "");
@@ -38,28 +38,17 @@
     return [r, g, b, a];
   }
 
-  // Guardado al cambiar de mapa
-  $effect(() => {
-    const idActual = mapaActual?.id;
-    if (mapaActivoCopia && mapaActivoCopia.id !== idActual) {
-      if (hayCambiosPendientes) {
-        guardarCambios(mapaActivoCopia);
-      }
-    }
-    mapaActivoCopia = mapaActual ? { ...mapaActual } : null;
-  });
-
   function registrarModificacion() {
+    if (!mapaActual) return;
     hayCambiosPendientes = true;
     if (temporizadorGuardado) clearTimeout(temporizadorGuardado);
-    // Solo espera 5s si el usuario NO hace nada más
     temporizadorGuardado = setTimeout(() => {
       guardarCambios(mapaActual);
     }, 5000);
   }
 
   export async function forzarGuardadoInmediato() {
-    if (hayCambiosPendientes) {
+    if (hayCambiosPendientes && mapaActual) {
       await guardarCambios(mapaActual);
     }
   }
@@ -78,101 +67,138 @@
 
     try {
       await invoke("modificar_mapa", { mapa: mapaModificado });
+      if (onActualizarMapa) {
+        onActualizarMapa(mapaModificado);
+      }
     } catch (err) {
       console.error("Error al persistir cambios de rejilla en Rust:", err);
     }
   }
 
-  // Guardado inmediato al pulsar en cualquier otra parte de la ventana
+  // Quitar el foco y guardar de inmediato si se pulsa en cualquier otra parte
   onMount(() => {
     function onPointerDownGlobal(e: PointerEvent) {
-      if (barraRef && barraRef.contains(e.target as Node)) {
-        return;
-      }
-      if (hayCambiosPendientes) {
-        guardarCambios(mapaActual);
+      const target = e.target as Node;
+      // Si el clic fue fuera de la barra de herramientas
+      if (barraRef && !barraRef.contains(target)) {
+        // Desenfocar explícitamente cualquier input activo
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        if (hayCambiosPendientes && mapaActual) {
+          guardarCambios(mapaActual);
+        }
       }
     }
 
     window.addEventListener("pointerdown", onPointerDownGlobal);
     return () => {
       window.removeEventListener("pointerdown", onPointerDownGlobal);
-      if (hayCambiosPendientes) guardarCambios(mapaActual);
+      if (hayCambiosPendientes && mapaActual) guardarCambios(mapaActual);
     };
   });
 
   function normalizarTamano() {
     const t = Math.round(Number(rejilla.tamano));
-    rejilla.tamano = Number.isFinite(t) && t > 0 ? Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, t)) : TAMANO_DEFECTO;
+    const fallbackRust = mapaActual?.rejilla || 50;
+    rejilla.tamano = Number.isFinite(t) && t > 0 ? Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, t)) : fallbackRust;
     registrarModificacion();
   }
+
+  const GROSOR_MIN = 0;
+  const GROSOR_MAX = 10;
+  const GROSOR_PASO = 1;
 
   function normalizarGrosor() {
     const g = Number(rejilla.grosor);
-    rejilla.grosor = Number.isFinite(g) && g > 0 ? Math.min(5, Math.max(0.5, g)) : 1;
+    const fallbackRust = mapaActual?.grosor ?? 1;
+    rejilla.grosor = Number.isFinite(g) && g >= GROSOR_MIN 
+      ? Math.min(GROSOR_MAX, Math.max(GROSOR_MIN, g)) 
+      : fallbackRust;
     registrarModificacion();
   }
+
+  function alRuedaGrosor(e: WheelEvent) {
+    if (!mapaActual) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1 : -1;
+    
+    // Si es 0 u otro número válido, lo respeta en lugar de caer al fallback
+    const actual = Number.isFinite(Number(rejilla.grosor))
+      ? Math.round(Number(rejilla.grosor))
+      : (mapaActual.grosor ?? 1);
+
+    rejilla.grosor = Math.min(GROSOR_MAX, Math.max(GROSOR_MIN, actual + delta));
+    registrarModificacion();
+  }
+  
+  // MODIFICACIÓN CON LA RUEDA DEL RATÓN
+  function alRuedaTamano(e: WheelEvent) {
+    if (!mapaActual) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 5 : -5;
+    const actual = Math.round(Number(rejilla.tamano) || mapaActual.rejilla || 50);
+    rejilla.tamano = Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, actual + delta));
+    registrarModificacion();
+  }
+
 </script>
 
-<div class="barra-herramientas" bind:this={barraRef}>
-  <button class="btn-lapiz" title="Modo Dibujo">✏️</button>
+<div class="barra-herramientas" class:desactivada={!mapaActual} bind:this={barraRef}>
+  <button class="btn-lapiz" title="Modo Dibujo" disabled={!mapaActual}>✏️</button>
 
-  <label class="control" title="Mostrar u ocultar la rejilla">
-    <input
-      type="checkbox"
-      checked={rejilla.visible !== false}
-      onchange={(e) => {
-        rejilla.visible = e.currentTarget.checked;
-        registrarModificacion();
-      }}
-    />
-    <span>Rejilla</span>
-  </label>
-
-  <div class="control" class:apagado={rejilla.visible === false}>
-    <label for="rejilla-tamano">Celda:</label>
+  <div class="control" class:apagado={!mapaActual}>
+    <label for="rejilla-tamano">Rejilla:</label>
     <input
       id="rejilla-tamano"
       type="number"
+      disabled={!mapaActual}
       bind:value={rejilla.tamano}
       oninput={registrarModificacion}
       onchange={normalizarTamano}
+      onwheel={alRuedaTamano}
       min={TAMANO_MIN}
       max={TAMANO_MAX}
       step="5"
+      title="Rueda del ratón para subir/bajar de 5 en 5"
     />
     <span>px</span>
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!mapaActual}>
     <label for="rejilla-color">Color:</label>
     <input
       id="rejilla-color"
       type="color"
+      disabled={!mapaActual}
       bind:value={rejilla.color}
       oninput={registrarModificacion}
     />
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!mapaActual}>
     <label for="rejilla-grosor">Grosor:</label>
     <input
       id="rejilla-grosor"
       type="number"
+      disabled={!mapaActual}
       bind:value={rejilla.grosor}
       oninput={registrarModificacion}
       onchange={normalizarGrosor}
-      min="0.5"
-      max="5"
-      step="0.5"
+      onwheel={alRuedaGrosor}
+      min={GROSOR_MIN}
+      max={GROSOR_MAX}
+      step={GROSOR_PASO}
+      title="Rueda del ratón para subir/bajar de 1 en 1"
     />
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!mapaActual}>
     <label for="rejilla-opacidad">Opacidad:</label>
     <input
       id="rejilla-opacidad"
       type="range"
+      disabled={!mapaActual}
       min="0"
       max="1"
       step="0.05"
@@ -193,6 +219,11 @@
     border-radius: 6px;
     font-size: 13px;
     border: 1px solid #3f3f46;
+    user-select: none;
+  }
+  .barra-herramientas.desactivada {
+    opacity: 0.5;
+    pointer-events: none;
   }
   .control { display: flex; align-items: center; gap: 6px; }
   .control.apagado { opacity: 0.4; }

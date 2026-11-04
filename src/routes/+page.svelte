@@ -1,4 +1,5 @@
 <!-- src/routes/+page.svelte -->
+<!-- src/routes/+page.svelte -->
 <script>
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
@@ -17,23 +18,14 @@
   let historialTiradas = $state([]);
 
   let zonaSeleccionadaId = $state(1);
-  let mapaActual = $state({
-    id: 1,
-    id_zona: 1,
-    url_imagen_fondo: "",
-    ancho: 1000,
-    alto: 1000,
-    rejilla: 50,
-    color_opacidad: [255, 255, 255, 76],
-    grosor: 1,
-    orden: 0
-  });
+  let mapaActual = $state(null);
 
   let instanciaSeleccionada = $state(null);
   let fichaParaEditar = $state(null);
 
   let comandoChat = $state("");
   let panelDerechoRef;
+  let barraRejillaRef;
 
   let rejilla = $state({
     visible: true,
@@ -48,8 +40,8 @@
       await recargarZonas();
       if (zonas.length > 0) {
         zonaSeleccionadaId = zonas[0].id;
+        await recargarMapas(zonaSeleccionadaId);
       }
-      await recargarMapas(zonaSeleccionadaId);
       bancoEntidades = await invoke("obtener_banco_entidades");
       instanciasActivas = await invoke("obtener_instancias_activas");
       historialTiradas = await invoke("obtener_historial_tiradas");
@@ -65,34 +57,58 @@
   async function recargarMapas(idZona) {
     mapas = await invoke("obtener_mapas_zona", { zonaId: idZona });
     if (mapas.length > 0) {
-      // Si el mapa actual ya no existe o cambió de zona, cargamos el primero
-      if (!mapas.some((m) => m.id === mapaActual?.id)) {
-        aplicarMapa(mapas[0]);
-      }
+      const existente = mapas.find((m) => m.id === mapaActual?.id);
+      aplicarMapa(existente || mapas[0]);
+    } else {
+      mapaActual = null;
     }
   }
 
-  let barraRejillaRef;
-
   async function cambiarZona(id) {
-    // Si había cambios pendientes en la rejilla, se guardan en el acto
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
     await barraRejillaRef?.forzarGuardadoInmediato();
     zonaSeleccionadaId = id;
     await recargarMapas(id);
   }
 
+  // GUARDA EL MAPA ANTERIOR ANTES DE CAMBIAR AL NUEVO
+  async function cambiarMapa(nuevoMapa) {
+    if (!nuevoMapa || mapaActual?.id === nuevoMapa?.id) return;
+    
+    // 1. Quitar el foco activo si el usuario estaba escribiendo
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    // 2. Guardar en Rust los cambios del mapa saliente
+    await barraRejillaRef?.forzarGuardadoInmediato();
+    // 3. Aplicar los valores del nuevo mapa
+    aplicarMapa(nuevoMapa);
+  }
+
   function aplicarMapa(m) {
+    if (!m) {
+      mapaActual = null;
+      return;
+    }
     mapaActual = m;
+
     rejilla.tamano = m.rejilla;
     rejilla.grosor = m.grosor;
-    if (m.color_opacidad && m.color_opacidad.length >= 4) {
-      rejilla.opacidad = m.color_opacidad[3] / 255;
-      rejilla.color =
-        "#" +
-        m.color_opacidad
-          .slice(0, 3)
-          .map((v) => v.toString(16).padStart(2, "0"))
-          .join("");
+
+    if (Array.isArray(m.color_opacidad) && m.color_opacidad.length >= 4) {
+      const [r, g, b, a] = m.color_opacidad;
+      rejilla.color = `#${[r, g, b].map((v) => Number(v).toString(16).padStart(2, "0")).join("")}`;
+      rejilla.opacidad = Number(a) / 255;
+    }
+  }
+
+  function onMapaActualizadoPorRejilla(mapaModificado) {
+    mapaActual = mapaModificado;
+    const idx = mapas.findIndex((m) => m.id === mapaModificado.id);
+    if (idx !== -1) {
+      mapas[idx] = mapaModificado;
     }
   }
 
@@ -200,15 +216,20 @@
     {zonaSeleccionadaId}
     {mapaActual}
     onSeleccionarZona={cambiarZona}
-    onSeleccionarMapa={aplicarMapa}
+    onSeleccionarMapa={cambiarMapa}
     onRecargarZonas={recargarZonas}
     onRecargarMapas={recargarMapas}
   />
 
   <main class="area-central">
     <div class="barra-superior">
-      <BarraRejilla bind:this={barraRejillaRef} bind:rejilla {mapaActual} />
-    </div>
+      <BarraRejilla
+        bind:this={barraRejillaRef}
+        bind:rejilla
+        {mapaActual}
+        onActualizarMapa={onMapaActualizadoPorRejilla}
+      />
+  </div>
 
     <div class="contenedor-lienzo">
       <Tablero mapa={mapaActual} {rejilla} />

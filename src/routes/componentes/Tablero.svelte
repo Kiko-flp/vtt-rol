@@ -248,13 +248,17 @@
   function dibujarRejilla(ctx, cam, mundoW, mundoH, vistaW, vistaH, estilo) {
     if (!estilo || estilo.visible === false) return;
 
-    const t = Number(estilo.tamano);
-    if (!(t > 0)) return; // vacío o inválido mientras el usuario escribe: no hacemos nada
-    const paso = t * cam.zoom; // tamaño de celda en pantalla
-    if (paso < PASO_MIN_PX) return;
+    // Si el grosor es 0 o menor, no dibuja la rejilla
+    const grosor = Number(estilo.grosor);
+    if (!(grosor > 0)) return;
 
-    const grosor = Math.max(0.1, Number(estilo.grosor) || 1);
     const opacidad = clamp(Number(estilo.opacidad) || 0, 0, 1);
+    if (opacidad <= 0) return;
+
+    const t = Number(estilo.tamano);
+    if (!(t > 0)) return;
+    const paso = t * cam.zoom;
+    if (paso < PASO_MIN_PX) return;
 
     // Rectángulo del mapa en pantalla, recortado a lo que se ve.
     const izq = cam.x;
