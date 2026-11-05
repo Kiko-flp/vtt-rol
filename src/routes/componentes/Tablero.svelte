@@ -3,6 +3,7 @@
   import { onMount, untrack, onDestroy } from 'svelte';
   import { urlDeImagen } from '$lib/imagenes';
 
+  /** @type {{ mapa?: any, rejilla?: any }} */
   let {
     mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' },
     rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 }
@@ -30,6 +31,8 @@
   // Un <img> del DOM no debe volverse proxy: $state.raw.
   let imagenFondo = $state.raw(null);
   let urlActual = null;
+  /** @type {number | null} */
+  let idActual = null; // id del mapa mostrado
   let tokenCarga = 0;
 
   let panActivo = $state(false);
@@ -48,7 +51,8 @@
   // ---------------------------------------------------------------------------
   $effect(() => {
     const url = mapa?.url_imagen_fondo || '';
-    untrack(() => cargarFondo(url));
+    const id = mapa?.id ?? null;
+    untrack(() => cargarFondo(url, id));
   });
 
   // La memoria solo se destruye al cerrar el tablero, no en cada cambio de mapa
@@ -66,10 +70,18 @@
     }
   }
 
-  function cargarFondo(url) {
-    // Si la URL es la misma Y la imagen ya está en memoria, la reutilizamos (0% CPU, 0 MB extra)
-    if (url === urlActual && imagenFondo) {
-      ajustarVista();
+  /**
+   * @param {string} url
+   * @param {number | null} id
+   */
+  function cargarFondo(url, id) {
+    const cambioDeMapa = id !== idActual;
+    idActual = id;
+
+    // Mismo fondo (ya cargado, o sin imagen): no se recarga nada. La cámara solo se recentra si es
+    // OTRO mapa; si no, guardar la rejilla o renombrar mapas la devolvería al centro cada vez.
+    if (url === urlActual && (imagenFondo || !url)) {
+      if (cambioDeMapa) ajustarVista();
       return;
     }
 

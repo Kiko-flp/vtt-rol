@@ -2,7 +2,7 @@
 <script>
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { iniciarImagenes } from "$lib/imagenes";
+  import { partida } from "$lib/partida.svelte";
 
   import PanelIzquierdo from "./componentes/PanelIzquierdo.svelte";
   import PanelDerecho from "./componentes/PanelDerecho.svelte";
@@ -11,107 +11,27 @@
   import BarraDados from "./componentes/BarraDados.svelte";
   import ModalFicha from "./componentes/ModalFicha.svelte";
 
-  let zonas = $state([]);
-  let mapas = $state([]);
-  let bancoEntidades = $state([]);
-  let instanciasActivas = $state([]);
   let historialTiradas = $state([]);
 
-  let zonaSeleccionadaId = $state(1);
-  let mapaActual = $state(null);
-
-  let instanciaSeleccionada = $state(null);
+  // Solo se guarda el id: así la ficha seleccionada se actualiza sola cuando se recargan las
+  // instancias, y desaparece si Rust la elimina (p. ej. al borrar su zona).
+  let idInstanciaSeleccionada = $state(null);
+  let instanciaSeleccionada = $derived(
+    partida.instancias.find((i) => i.id_instancia === idInstanciaSeleccionada) ?? null
+  );
   let fichaParaEditar = $state(null);
 
   let comandoChat = $state("");
   let panelDerechoRef;
-  let barraRejillaRef;
-
-  let rejilla = $state({
-    visible: true,
-    tamano: 50,
-    color: "#ffffff",
-    grosor: 1,
-    opacidad: 0.3
-  });
 
   onMount(async () => {
     try {
-      await iniciarImagenes(); // necesario antes de mostrar ningún mapa con imagen
-      await recargarZonas();
-      if (zonas.length > 0) {
-        zonaSeleccionadaId = zonas[0].id;
-        await recargarMapas(zonaSeleccionadaId);
-      }
-      bancoEntidades = await invoke("obtener_banco_entidades");
-      instanciasActivas = await invoke("obtener_instancias_activas");
+      await partida.iniciar();
       historialTiradas = await invoke("obtener_historial_tiradas");
     } catch (err) {
       console.error("Error al obtener datos de Rust:", err);
     }
   });
-
-  async function recargarZonas() {
-    zonas = await invoke("obtener_zonas");
-  }
-
-  async function recargarMapas(idZona) {
-    mapas = await invoke("obtener_mapas_zona", { zonaId: idZona });
-    if (mapas.length > 0) {
-      const existente = mapas.find((m) => m.id === mapaActual?.id);
-      aplicarMapa(existente || mapas[0]);
-    } else {
-      mapaActual = null;
-    }
-  }
-
-  async function cambiarZona(id) {
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    await barraRejillaRef?.forzarGuardadoInmediato();
-    zonaSeleccionadaId = id;
-    await recargarMapas(id);
-  }
-
-  // GUARDA EL MAPA ANTERIOR ANTES DE CAMBIAR AL NUEVO
-  async function cambiarMapa(nuevoMapa) {
-    if (!nuevoMapa || mapaActual?.id === nuevoMapa?.id) return;
-    
-    // 1. Quitar el foco activo si el usuario estaba escribiendo
-    if (document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    // 2. Guardar en Rust los cambios del mapa saliente
-    await barraRejillaRef?.forzarGuardadoInmediato();
-    // 3. Aplicar los valores del nuevo mapa
-    aplicarMapa(nuevoMapa);
-  }
-
-  function aplicarMapa(m) {
-    if (!m) {
-      mapaActual = null;
-      return;
-    }
-    mapaActual = m;
-
-    rejilla.tamano = m.rejilla;
-    rejilla.grosor = m.grosor;
-
-    if (Array.isArray(m.color_opacidad) && m.color_opacidad.length >= 4) {
-      const [r, g, b, a] = m.color_opacidad;
-      rejilla.color = `#${[r, g, b].map((v) => Number(v).toString(16).padStart(2, "0")).join("")}`;
-      rejilla.opacidad = Number(a) / 255;
-    }
-  }
-
-  function onMapaActualizadoPorRejilla(mapaModificado) {
-    mapaActual = mapaModificado;
-    const idx = mapas.findIndex((m) => m.id === mapaModificado.id);
-    if (idx !== -1) {
-      mapas[idx] = mapaModificado;
-    }
-  }
 
   function actualizarDadoEnChat(fragmento, esSuma) {
     const matchFrag = fragmento.match(/^(\d*)d(\d+)([!a-z]*)$/i);
@@ -210,30 +130,15 @@
 </script>
 
 <div class="contenedor-principal">
-  <PanelIzquierdo
-    {zonas}
-    {mapas}
-    banco={bancoEntidades}
-    {zonaSeleccionadaId}
-    {mapaActual}
-    onSeleccionarZona={cambiarZona}
-    onSeleccionarMapa={cambiarMapa}
-    onRecargarZonas={recargarZonas}
-    onRecargarMapas={recargarMapas}
-  />
+  <PanelIzquierdo />
 
   <main class="area-central">
     <div class="barra-superior">
-      <BarraRejilla
-        bind:this={barraRejillaRef}
-        bind:rejilla
-        {mapaActual}
-        onActualizarMapa={onMapaActualizadoPorRejilla}
-      />
-  </div>
+      <BarraRejilla />
+    </div>
 
     <div class="contenedor-lienzo">
-      <Tablero mapa={mapaActual} {rejilla} />
+      <Tablero mapa={partida.mapaActual} rejilla={partida.rejilla} />
     </div>
 
     <div class="barra-inferior">
@@ -247,11 +152,11 @@
 
   <PanelDerecho
     bind:this={panelDerechoRef}
-    instancias={instanciasActivas}
+    instancias={partida.instancias}
     tiradas={historialTiradas}
     {instanciaSeleccionada}
     bind:comandoChat
-    onSeleccionarInstancia={(i) => (instanciaSeleccionada = i)}
+    onSeleccionarInstancia={(i) => (idInstanciaSeleccionada = i?.id_instancia ?? null)}
     onModificarVida={modificarVida}
     onEnviarTirada={procesarTirada}
   />
@@ -259,7 +164,7 @@
   {#if fichaParaEditar}
     <ModalFicha
       bind:entidad={fichaParaEditar}
-      {zonas}
+      zonas={partida.zonas}
       onCerrar={() => (fichaParaEditar = null)}
     />
   {/if}
