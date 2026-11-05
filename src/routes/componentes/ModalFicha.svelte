@@ -1,115 +1,288 @@
-<!-- src/routes/componentes/ModalFicha.svelte -->
 <script>
-  // entidad es $bindable porque este modal edita sus campos (nombre, vida, etc.)
-  let { entidad = $bindable(), zonas = [], onCerrar } = $props();
+  import { convertFileSrc } from "@tauri-apps/api/core";
 
-  let pestanaActiva = $state("texto");
+  let {
+    entidad,
+    zonas = [],
+    onGuardar,
+    onCerrar
+  } = $props();
 
-  // Obtener datos independientemente de si nos pasan la Entidad o la Instancia
-  let datosBase = $derived(entidad?.base ? entidad.base : entidad);
-  let vidaActual = $derived(entidad?.vida_actual !== undefined ? entidad.vida_actual : datosBase?.vida_max);
+  let borrador = $state({ ...entidad });
+  let inputFotoRef = $state(null);
+  let fotoPendiente = $state(null);
+  let quitarFoto = $state(false);
+  let error = $state("");
+  let guardando = $state(false);
 
-  function alTeclear(e) {
-    if (e.key === "Escape") onCerrar();
+  const fuenteFoto = $derived(
+    fotoPendiente ||
+      (borrador.foto_url
+        ? borrador.foto_url.startsWith("data:") || borrador.foto_url.startsWith("http")
+          ? borrador.foto_url
+          : convertFileSrc(borrador.foto_url)
+        : "")
+  );
+
+  function procesarImagen(archivo) {
+    return new Promise((resolve, reject) => {
+      if (!archivo.type.startsWith("image/")) {
+        reject(new Error("Selecciona un archivo de imagen."));
+        return;
+      }
+      if (archivo.size > 10 * 1024 * 1024) {
+        reject(new Error("La imagen original debe ocupar menos de 10 MB."));
+        return;
+      }
+
+      const imagen = new Image();
+      const lector = new FileReader();
+      lector.onerror = () => reject(new Error("No se pudo leer el archivo de imagen."));
+      lector.onload = () => {
+        imagen.onerror = () => reject(new Error("El archivo seleccionado no es una imagen válida."));
+        imagen.onload = () => {
+          const escala = Math.min(1, 512 / Math.max(imagen.naturalWidth, imagen.naturalHeight));
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(imagen.naturalWidth * escala));
+          canvas.height = Math.max(1, Math.round(imagen.naturalHeight * escala));
+          const contexto = canvas.getContext("2d");
+          if (!contexto) {
+            reject(new Error("No se pudo procesar la imagen."));
+            return;
+          }
+          contexto.drawImage(imagen, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL("image/webp", 0.82));
+        };
+        imagen.src = String(lector.result);
+      };
+      lector.readAsDataURL(archivo);
+    });
+  }
+
+  async function alSeleccionarFoto(evento) {
+    const archivo = evento.currentTarget.files?.[0];
+    evento.currentTarget.value = "";
+    if (!archivo) return;
+    try {
+      fotoPendiente = await procesarImagen(archivo);
+      quitarFoto = false;
+      error = "";
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  function quitarImagen() {
+    fotoPendiente = null;
+    quitarFoto = true;
+    borrador.foto_url = null;
+  }
+
+  async function guardar() {
+    if (!borrador.nombre.trim()) {
+      error = "El nombre de la ficha no puede estar vacío.";
+      return;
+    }
+    if (Number(borrador.vida_max) < 1) {
+      error = "La vida máxima debe ser mayor que cero.";
+      return;
+    }
+
+    guardando = true;
+    error = "";
+    try {
+      await onGuardar(
+        {
+          ...borrador,
+          nombre: borrador.nombre.trim(),
+          vida_max: Number(borrador.vida_max),
+          armadura: Number(borrador.armadura),
+          velocidad: Number(borrador.velocidad),
+          rango_arma: Number(borrador.rango_arma),
+          zona_id: Number(borrador.zona_id)
+        },
+        fotoPendiente,
+        quitarFoto
+      );
+      onCerrar();
+    } catch (err) {
+      error = err instanceof Error ? err.message : String(err);
+    } finally {
+      guardando = false;
+    }
+  }
+
+  function alTeclear(evento) {
+    if (evento.key === "Escape" && !guardando) onCerrar();
   }
 </script>
 
 <svelte:window onkeydown={alTeclear} />
 
-<!-- El fondo cierra al hacer clic fuera; Escape (arriba) es la alternativa de teclado -->
+<input
+  bind:this={inputFotoRef}
+  class="entrada-foto"
+  type="file"
+  accept="image/png,image/jpeg,image/webp,image/gif"
+  onchange={alSeleccionarFoto}
+/>
+
 <div class="fondo-oscuro" role="presentation" onclick={onCerrar}>
-  <div
+  <section
     class="ventana-ficha"
     role="dialog"
     aria-modal="true"
-    aria-label="Ficha de entidad"
-    tabindex="-1"
-    onclick={(e) => e.stopPropagation()}
-    onkeydown={(e) => e.stopPropagation()}
+    aria-labelledby="titulo-ficha"
+    onclick={(evento) => evento.stopPropagation()}
+    onkeydown={(evento) => evento.stopPropagation()}
   >
     <header class="cabecera">
-      <h2>Ficha de Entidad (Rolmaster)</h2>
-      <button class="btn-cerrar" onclick={onCerrar} aria-label="Cerrar">✕</button>
+      <div>
+        <h2 id="titulo-ficha">Editar ficha</h2>
+        <p>Los cambios se aplican al guardar.</p>
+      </div>
+      <button class="btn-icono" type="button" aria-label="Cerrar" onclick={onCerrar}>×</button>
     </header>
 
-    <div class="cuerpo-ficha">
-      <div class="columna-foto">
-        <div class="foto-placeholder">
-          {#if datosBase?.foto_url}
-            <img src={datosBase.foto_url} alt={datosBase.nombre} />
+    <div class="editor-principal">
+      <div class="foto-columna">
+        <button
+          type="button"
+          class="previsualizacion {borrador.tipo.toLowerCase()}"
+          onclick={() => inputFotoRef?.click()}
+          title="Elegir una imagen"
+        >
+          {#if fuenteFoto}
+            <img src={fuenteFoto} alt="Vista previa de {borrador.nombre}" />
           {:else}
-            <span>Foto (Público)</span>
+            <span class="sin-foto">{borrador.nombre.slice(0, 2).toUpperCase() || "?"}</span>
           {/if}
-        </div>
+          <span class="insignia-camara" aria-hidden="true">+</span>
+        </button>
+        <button class="btn-secundario" type="button" onclick={() => inputFotoRef?.click()}>
+          Cambiar imagen
+        </button>
+        {#if fuenteFoto}
+          <button class="btn-quitar-foto" type="button" onclick={quitarImagen}>Quitar imagen</button>
+        {/if}
+        <small>PNG, JPG, WebP o GIF. Se optimiza a un máximo de 512 px.</small>
       </div>
 
-      <div class="columna-datos">
-        <div class="fila">
-          <input type="text" bind:value={datosBase.nombre} class="input-nombre" />
-          <label><input type="checkbox" bind:checked={datosBase.es_publico} /> Hacer público</label>
+      <div class="campos">
+        <label class="campo">
+          <span>Nombre</span>
+          <input bind:value={borrador.nombre} maxlength="80" autocomplete="off" />
+        </label>
+
+        <label class="campo">
+          <span>Tipo de ficha</span>
+          <select bind:value={borrador.tipo}>
+            <option value="Jugador">Jugador</option>
+            <option value="NPC">NPC</option>
+            <option value="Enemigo">Enemigo</option>
+          </select>
+        </label>
+
+        <div class="rejilla-campos">
+          <label class="campo">
+            <span>Vida máxima</span>
+            <input type="number" min="1" max="32767" bind:value={borrador.vida_max} />
+          </label>
+          <label class="campo">
+            <span>Armadura</span>
+            <input type="number" min="0" max="32767" bind:value={borrador.armadura} />
+          </label>
+          <label class="campo">
+            <span>Velocidad</span>
+            <input type="number" min="0" max="32767" bind:value={borrador.velocidad} />
+          </label>
+          <label class="campo">
+            <span>Rango</span>
+            <input type="number" min="0" max="32767" bind:value={borrador.rango_arma} />
+          </label>
         </div>
 
-        <div class="fila parametros">
-          <label>Vida Máx: <input type="number" bind:value={datosBase.vida_max} /></label>
-          <label>Armadura: <input type="number" bind:value={datosBase.armadura} /></label>
-          <label>Velocidad: <input type="number" bind:value={datosBase.velocidad} /></label>
-          <label>Rango: <input type="number" bind:value={datosBase.rango_arma} /></label>
-        </div>
-
-        <div class="fila">
-          <label for="ficha-zona">Zona asociada:</label>
-          <select id="ficha-zona" bind:value={datosBase.zona_id}>
-            {#each zonas as z}
-              <option value={z.id}>{z.nombre}</option>
+        <label class="campo">
+          <span>Zona</span>
+          <select bind:value={borrador.zona_id}>
+            {#each zonas as zona (zona.id)}
+              <option value={zona.id}>{zona.nombre}</option>
             {/each}
           </select>
-        </div>
+        </label>
+
+        <label class="opcion">
+          <input type="checkbox" bind:checked={borrador.es_unico} />
+          <span>Ficha única <small>No se puede colocar más de una vez a la vez.</small></span>
+        </label>
+        <label class="opcion">
+          <input type="checkbox" bind:checked={borrador.es_publico} />
+          <span>Ficha pública</span>
+        </label>
       </div>
     </div>
 
-    <div class="pestanas">
-      <button class:activa={pestanaActiva === "texto"} onclick={() => (pestanaActiva = "texto")}>Notas</button>
-      <button class:activa={pestanaActiva === "pdf"} onclick={() => (pestanaActiva = "pdf")}>Archivos ({datosBase?.archivos_adjuntos?.length || 0})</button>
-    </div>
+    {#if error}
+      <p class="error" role="alert">{error}</p>
+    {/if}
 
-    <div class="contenido-pestana">
-      {#if pestanaActiva === "texto"}
-        <textarea placeholder="Notas privadas del máster..."></textarea>
-      {:else}
-        <div class="panel-archivos">
-          {#each datosBase?.archivos_adjuntos || [] as archivo}
-            {#if archivo}
-              <div class="item-archivo">📄 {archivo}</div>
-            {/if}
-          {/each}
-          {#if !datosBase?.archivos_adjuntos?.length}
-            <span>Sin archivos adjuntos</span>
-          {/if}
-        </div>
-      {/if}
-    </div>
-  </div>
+    <footer class="acciones">
+      <button class="btn-secundario" type="button" disabled={guardando} onclick={onCerrar}>Cancelar</button>
+      <button class="btn-guardar" type="button" disabled={guardando} onclick={guardar}>
+        {guardando ? "Guardando…" : "Guardar cambios"}
+      </button>
+    </footer>
+  </section>
 </div>
 
 <style>
+  .entrada-foto { display: none; }
   .fondo-oscuro {
-    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-    background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 100;
+    position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center;
+    padding: 16px; background: #000b; box-sizing: border-box;
   }
   .ventana-ficha {
-    background: #18181b; border: 1px solid #3f3f46; border-radius: 8px; width: 560px; padding: 14px; display: flex; flex-direction: column; gap: 10px;
+    width: min(620px, 100%); max-height: min(90vh, 760px); overflow: auto; box-sizing: border-box;
+    display: flex; flex-direction: column; gap: 16px; padding: 20px;
+    color: #f4f4f5; background: #18181b; border: 1px solid #3f3f46; border-radius: 12px;
+    box-shadow: 0 20px 60px #000b;
   }
-  .cabecera { display: flex; justify-content: space-between; align-items: center; }
-  .btn-cerrar { background: none; border: none; color: white; cursor: pointer; font-size: 16px; }
-  .cuerpo-ficha { display: flex; gap: 14px; }
-  .foto-placeholder { width: 120px; height: 120px; background: #27272a; border: 1px dashed #52525b; display: flex; align-items: center; justify-content: center; font-size: 11px; }
-  .columna-datos { flex: 1; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
-  .input-nombre { font-size: 15px; font-weight: bold; background: #09090b; border: 1px solid #3f3f46; color: white; padding: 4px; }
-  .fila { display: flex; gap: 10px; align-items: center; }
-  .parametros input { width: 45px; background: #09090b; border: 1px solid #3f3f46; color: white; }
-  .pestanas { display: flex; gap: 6px; border-bottom: 1px solid #3f3f46; }
-  .pestanas button { background: none; border: none; color: #a1a1aa; padding: 4px 10px; cursor: pointer; }
-  .pestanas button.activa { color: white; border-bottom: 2px solid #ef4444; }
-  textarea { width: 100%; height: 100px; background: #09090b; border: 1px solid #3f3f46; color: white; padding: 6px; box-sizing: border-box; }
-  .panel-archivos { height: 100px; background: #09090b; display: flex; flex-direction: column; gap: 4px; padding: 6px; }
+  .cabecera, .acciones { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .cabecera h2 { margin: 0; font-size: 19px; }
+  .cabecera p { margin: 4px 0 0; color: #a1a1aa; font-size: 12px; }
+  .btn-icono { border: 0; color: #d4d4d8; background: transparent; font-size: 24px; cursor: pointer; }
+  .editor-principal { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 22px; }
+  .foto-columna { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .previsualizacion {
+    position: relative; width: 142px; height: 142px; overflow: hidden; border: 4px solid #fafafa;
+    border-radius: 0; padding: 0; color: white; background: #27272a; cursor: pointer;
+  }
+  .previsualizacion img { width: 100%; height: 100%; object-fit: cover; }
+  .sin-foto { display: grid; width: 100%; height: 100%; place-items: center; font-size: 34px; font-weight: 700; }
+  .insignia-camara { position: absolute; left: calc(50% - 13px); bottom: 8px; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: #09090b; font-size: 20px; }
+  .foto-columna > small { color: #a1a1aa; font-size: 10px; text-align: center; line-height: 1.4; }
+  .campos { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+  .campo { display: flex; flex-direction: column; gap: 5px; color: #d4d4d8; font-size: 12px; }
+  .campo input, .campo select {
+    width: 100%; min-width: 0; box-sizing: border-box; padding: 8px 9px;
+    color: #fafafa; background: #09090b; border: 1px solid #3f3f46; border-radius: 6px; font: inherit;
+  }
+  .campo input:focus, .campo select:focus { outline: 2px solid #3b82f6; outline-offset: 1px; }
+  .rejilla-campos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .opcion { display: flex; align-items: center; gap: 8px; color: #e4e4e7; font-size: 12px; cursor: pointer; }
+  .opcion input { accent-color: #3b82f6; }
+  .opcion small { display: block; margin-top: 2px; color: #a1a1aa; }
+  .btn-secundario, .btn-quitar-foto, .btn-guardar { padding: 8px 12px; border-radius: 6px; font: inherit; cursor: pointer; }
+  .btn-secundario { color: #e4e4e7; background: #27272a; border: 1px solid #52525b; }
+  .btn-quitar-foto { color: #fecaca; background: transparent; border: 1px solid #7f1d1d; font-size: 11px; }
+  .btn-guardar { color: white; background: #2563eb; border: 1px solid #3b82f6; font-weight: 600; }
+  button:disabled { opacity: 0.55; cursor: wait; }
+  .error { margin: 0; color: #fecaca; background: #7f1d1d55; border: 1px solid #991b1b; border-radius: 6px; padding: 8px 10px; font-size: 12px; }
+  @media (max-width: 560px) {
+    .ventana-ficha { padding: 14px; }
+    .editor-principal { grid-template-columns: 1fr; }
+    .foto-columna { display: grid; grid-template-columns: 100px 1fr; justify-items: start; }
+    .previsualizacion { grid-row: span 3; width: 88px; height: 88px; }
+    .foto-columna > small { text-align: left; }
+  }
 </style>

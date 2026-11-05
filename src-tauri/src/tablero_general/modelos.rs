@@ -16,11 +16,10 @@ pub enum Cuerpo {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Coordenada {
-    Localizacion(Vec<i16>),
+    Localizacion(Vec<f32>),
     NoPuesto,
 }
 
-// Representa la definición de una entidad
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Entidad {
     pub id: u16,
@@ -32,24 +31,16 @@ pub struct Entidad {
     pub rango_arma: i16,
     pub cuerpo: Cuerpo,
     pub zona_id: u16,
-
-    // Una criatura o NPC puede no tener foto (en JS llegará como string o null)
     #[serde(default)]
     pub foto_url: Option<String>,
-
-    // Si falta en el JSON, se asume false
     #[serde(default)]
     pub es_publico: bool,
-
-    // Si falta en el JSON, se asume lista vacía []
     #[serde(default)]
     pub archivos_adjuntos: Vec<Option<String>>,
-
     #[serde(default)]
     pub es_unico: bool,
 }
 
-// Representa una instancia de una entidad en el mapa
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Instancia {
     pub id_instancia: u16,
@@ -57,7 +48,6 @@ pub struct Instancia {
     pub base: Entidad,
     pub vida_actual: i16,
     pub coordenadas: Coordenada,
-
     #[serde(default)]
     pub activo: bool,
 }
@@ -86,12 +76,18 @@ pub struct Mapa {
     pub ancho: u16,
     pub alto: u16,
     pub rejilla: u16,
+    #[serde(default = "rejilla_visible_por_defecto")]
+    pub rejilla_visible: bool,
     pub color_opacidad: Vec<u8>,
     pub grosor: u16,
 
     // Si no viene en el JSON, se asume 0
     #[serde(default)]
     pub orden: u16,
+}
+
+fn rejilla_visible_por_defecto() -> bool {
+    true
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

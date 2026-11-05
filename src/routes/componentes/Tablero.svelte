@@ -5,7 +5,14 @@
 
   let {
     mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' },
-    rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 }
+    rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 },
+    instancias = [],
+    instanciaSeleccionada = null,
+    onSeleccionarInstancia,
+    onColocarEntidad,
+    onMoverInstancia,
+    onEditarEntidad,
+    onRetirarInstancia
   } = $props();
 
   // Por debajo de este tamaño en pantalla (px) la rejilla no se dibuja: no se ve y solo molesta.
@@ -34,6 +41,16 @@
 
   let panActivo = $state(false);
   let ultimo = { x: 0, y: 0 };
+  /** @type {null | { id: number, x: number, y: number, inicioX: number, inicioY: number, offsetX: number, offsetY: number, movida: boolean, pointerId: number }} */
+  let arrastreFicha = $state(null);
+  let menuFicha = $state(null);
+  let fichasEnMapa = $derived(
+    instancias.filter((instancia) =>
+      instancia.activo &&
+      instancia.id_mapa === mapa?.id &&
+      Array.isArray(instancia.coordenadas?.Localizacion)
+    )
+  );
 
   const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
@@ -141,10 +158,10 @@
     cam = { zoom, x: px - (px - cam.x) * k, y: py - (py - cam.y) * k };
   }
 
-  // Por ahora cualquier arrastre con botón izquierdo o central mueve la vista.
-  // Cuando haya fichas: solo empezar el pan si el clic no cae sobre una ficha.
+  // Arrastrar una ficha la mueve; arrastrar el fondo desplaza la cámara.
   function alPresionar(e) {
     if (e.button !== 0 && e.button !== 1) return;
+    if (e.target instanceof Element && e.target.closest('[data-ficha="true"]')) return;
     e.preventDefault();
     panActivo = true;
     ultimo = { x: e.clientX, y: e.clientY };
@@ -160,6 +177,207 @@
   function alSoltar(e) {
     panActivo = false;
     if (contenedor?.hasPointerCapture?.(e.pointerId)) contenedor.releasePointerCapture(e.pointerId);
+  }
+
+  function tamanoCelda() {
+    return Math.max(1, Number(rejilla.tamano) || Number(mapa?.rejilla) || 50);
+  }
+
+  function dimensionesFicha(instancia) {
+    const grande = instancia.base?.cuerpo?.Grande;
+    return Array.isArray(grande) && grande.length >= 2
+      ? { columnas: Math.max(1, grande[0]), filas: Math.max(1, grande[1]) }
+      : { columnas: 1, filas: 1 };
+  }
+
+  function limitarCelda(x, y, instancia = null) {
+    const celda = tamanoCelda();
+    const { w, h } = dimsMundo();
+    const { columnas, filas } = instancia ? dimensionesFicha(instancia) : { columnas: 1, filas: 1 };
+    const maxX = Math.min(32767, Math.max(0, Math.floor((w - columnas * celda) / celda)));
+    const maxY = Math.min(32767, Math.max(0, Math.floor((h - filas * celda) / celda)));
+    return {
+      x: clamp(Math.floor(x), 0, maxX),
+      y: clamp(Math.floor(y), 0, maxY)
+    };
+  }
+
+  function limitarPosicion(x, y, instancia) {
+    const celda = tamanoCelda();
+    const { w, h } = dimsMundo();
+    const { columnas, filas } = dimensionesFicha(instancia);
+    const maxX = Math.min(32767, Math.max(0, Math.floor((w - columnas * celda) / celda)));
+    const maxY = Math.min(32767, Math.max(0, Math.floor((h - filas * celda) / celda)));
+    return {
+      x: clamp(Math.round(x), 0, maxX),
+      y: clamp(Math.round(y), 0, maxY)
+    };
+  }
+
+  function coordenadaDesdePantalla(clientX, clientY) {
+    const rect = contenedor.getBoundingClientRect();
+    return {
+      x: (clientX - rect.left - cam.x) / cam.zoom,
+      y: (clientY - rect.top - cam.y) / cam.zoom
+    };
+  }
+
+  function fuenteImagen(url) {
+    if (!url) return "";
+    return url.startsWith("data:") || url.startsWith("http") ? url : convertFileSrc(url);
+  }
+
+  function abrirMenuFicha(evento, instancia) {
+    evento.preventDefault();
+    evento.stopPropagation();
+    arrastreFicha = null;
+    onSeleccionarInstancia?.(instancia);
+    menuFicha = { x: evento.clientX, y: evento.clientY, instancia };
+  }
+
+  function editarFichaDesdeMenu() {
+    const instancia = menuFicha?.instancia;
+    menuFicha = null;
+    if (instancia) onEditarEntidad?.(instancia.base);
+  }
+
+  function cerrarMenuFicha() {
+    menuFicha = null;
+  }
+
+  function cerrarMenuConEscape(evento) {
+    if (evento.key === "Escape") cerrarMenuFicha();
+  }
+
+  /**
+   * @param {{ entidadId: number, clientX: number, clientY: number }} detalle
+   */
+  function colocarEntidadEnPuntero({ entidadId, clientX, clientY }) {
+    if (!Number.isInteger(entidadId) || entidadId <= 0) return;
+    if (!mapa?.id) {
+      onColocarEntidad?.(entidadId, 0, 0);
+      return;
+    }
+
+    const punto = coordenadaDesdePantalla(clientX, clientY);
+    const celda = tamanoCelda();
+    const posicion = limitarCelda(punto.x / celda, punto.y / celda);
+    onColocarEntidad?.(entidadId, posicion.x, posicion.y);
+  }
+
+  /** @param {CustomEvent<{ entidadId: number, clientX: number, clientY: number }>} evento */
+  function alRecibirColocacionEntidad(evento) {
+    colocarEntidadEnPuntero(evento.detail);
+  }
+
+  /**
+   * @param {PointerEvent & { currentTarget: HTMLButtonElement }} e
+   * @param {{ id_instancia: number, coordenadas: { Localizacion: number[] }, base: { cuerpo?: { Grande?: number[] } } }} instancia
+   */
+  function iniciarArrastreFicha(e, instancia) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onSeleccionarInstancia?.(instancia);
+
+    const inicioX = e.clientX;
+    const inicioY = e.clientY;
+    const coordenadas = instancia.coordenadas.Localizacion;
+    const punto = coordenadaDesdePantalla(inicioX, inicioY);
+    const celda = tamanoCelda();
+    const x = Math.round(Number(coordenadas[0]) || 0);
+    const y = Math.round(Number(coordenadas[1]) || 0);
+    const arrastreInicial = {
+      id: instancia.id_instancia,
+      x,
+      y,
+      inicioX,
+      inicioY,
+      offsetX: punto.x - x * celda,
+      offsetY: punto.y - y * celda,
+      movida: false,
+      pointerId: e.pointerId
+    };
+
+    function quitarEscuchas() {
+      window.removeEventListener("pointermove", alMoverFicha);
+      window.removeEventListener("pointerup", alSoltarFicha);
+      window.removeEventListener("pointercancel", alCancelarFicha);
+    }
+
+    /** @param {PointerEvent} evento */
+    function alMoverFicha(evento) {
+      if (evento.pointerId !== arrastreInicial.pointerId) return;
+      if (
+        !arrastreInicial.movida &&
+        Math.hypot(evento.clientX - inicioX, evento.clientY - inicioY) < 4
+      ) {
+        return;
+      }
+
+      arrastreInicial.movida = true;
+      const ficha = fichasEnMapa.find((actual) => actual.id_instancia === arrastreInicial.id);
+      if (!ficha) return;
+      const posicion = posicionDesdeArrastre(evento, arrastreInicial, ficha);
+      arrastreFicha = { ...arrastreInicial, ...posicion };
+    }
+
+    /** @param {PointerEvent} evento */
+    async function alSoltarFicha(evento) {
+      if (evento.pointerId !== arrastreInicial.pointerId) return;
+      quitarEscuchas();
+      arrastreFicha = null;
+      if (!arrastreInicial.movida) return;
+
+      const ficha = fichasEnMapa.find((actual) => actual.id_instancia === arrastreInicial.id);
+      if (!ficha) return;
+      const posicionLibre = posicionDesdeArrastre(evento, arrastreInicial, ficha);
+      const posicionFinal = limitarPosicion(
+        posicionLibre.x,
+        posicionLibre.y,
+        ficha
+      );
+      await onMoverInstancia?.(arrastreInicial.id, posicionFinal.x, posicionFinal.y);
+    }
+
+    /** @param {PointerEvent} evento */
+    function alCancelarFicha(evento) {
+      if (evento.pointerId !== arrastreInicial.pointerId) return;
+      quitarEscuchas();
+      arrastreFicha = null;
+    }
+
+    window.addEventListener("pointermove", alMoverFicha);
+    window.addEventListener("pointerup", alSoltarFicha);
+    window.addEventListener("pointercancel", alCancelarFicha);
+  }
+
+  /**
+   * @param {PointerEvent} e
+   * @param {{ offsetX: number, offsetY: number }} arrastre
+   * @param {{ base?: { cuerpo?: { Grande?: number[] } } }} instancia
+   */
+  function posicionDesdeArrastre(e, arrastre, instancia) {
+    const punto = coordenadaDesdePantalla(e.clientX, e.clientY);
+    const celda = tamanoCelda();
+    return limitarPosicion(
+      Math.floor((punto.x - arrastre.offsetX) / celda),
+      Math.floor((punto.y - arrastre.offsetY) / celda),
+      instancia
+    );
+  }
+
+  function posicionFicha(instancia) {
+    const [x = 0, y = 0] = instancia.coordenadas.Localizacion;
+    const posicion = arrastreFicha?.id === instancia.id_instancia ? arrastreFicha : { x, y };
+    const celda = tamanoCelda();
+    const { columnas, filas } = dimensionesFicha(instancia);
+    return {
+      left: cam.x + Math.round(posicion.x) * celda * cam.zoom,
+      top: cam.y + Math.round(posicion.y) * celda * cam.zoom,
+      width: columnas * celda * cam.zoom,
+      height: filas * celda * cam.zoom
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -296,6 +514,7 @@
   }
 
   onMount(() => {
+    window.addEventListener("vtt-colocar-entidad", alRecibirColocacionEntidad);
     const observador = new ResizeObserver(([entrada]) => {
       const primera = !ancho;
       dpr = window.devicePixelRatio || 1;
@@ -306,11 +525,14 @@
     observador.observe(contenedor);
 
     return () => {
+      window.removeEventListener("vtt-colocar-entidad", alRecibirColocacionEntidad);
       observador.disconnect();
       cancelAnimationFrame(rafId);
     };
   });
 </script>
+
+<svelte:window onpointerdown={cerrarMenuFicha} onkeydown={cerrarMenuConEscape} />
 
 <div
   class="tablero"
@@ -328,6 +550,52 @@
 >
   <canvas bind:this={canvasFondo}></canvas>
   <canvas bind:this={canvasRejilla}></canvas>
+  {#each fichasEnMapa as instancia (instancia.id_instancia)}
+    {@const posicion = posicionFicha(instancia)}
+    <button
+      type="button"
+      class="ficha-tablero {instancia.base.tipo.toLowerCase()}"
+      class:seleccionada={instanciaSeleccionada?.id_instancia === instancia.id_instancia}
+      data-ficha="true"
+      data-instancia-id={instancia.id_instancia}
+      title="{instancia.base.nombre} · {instancia.vida_actual}/{instancia.base.vida_max} PV"
+      style:left="{posicion.left}px"
+      style:top="{posicion.top}px"
+      style:width="{posicion.width}px"
+      style:height="{posicion.height}px"
+      onpointerdown={(e) => iniciarArrastreFicha(e, instancia)}
+      oncontextmenu={(e) => abrirMenuFicha(e, instancia)}
+      ondblclick={(e) => {
+        e.stopPropagation();
+        onEditarEntidad?.(instancia.base);
+      }}
+    >
+      <span class="forma-ficha">
+        {#if instancia.base.foto_url}
+          <img class="foto-ficha" src={fuenteImagen(instancia.base.foto_url)} alt="" draggable="false" />
+        {:else}
+          <span class="inicial-ficha">{instancia.base.nombre.slice(0, 1).toUpperCase()}</span>
+        {/if}
+      </span>
+      <small>{instancia.vida_actual}</small>
+    </button>
+  {/each}
+  {#if menuFicha}
+    <div
+      class="menu-ficha"
+      style:left="{menuFicha.x}px"
+      style:top="{menuFicha.y}px"
+      onclick={(evento) => evento.stopPropagation()}
+      onpointerdown={(evento) => evento.stopPropagation()}
+    >
+      <button type="button" onclick={editarFichaDesdeMenu}>Editar datos</button>
+      <button type="button" class="peligro" onclick={() => {
+        const instancia = menuFicha.instancia;
+        menuFicha = null;
+        onRetirarInstancia?.(instancia);
+      }}>Retirar del mapa</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -350,4 +618,50 @@
     height: 100%;
     pointer-events: none; /* los eventos los gestiona el contenedor */
   }
+  .ficha-tablero {
+    position: absolute;
+    z-index: 2;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    color: white;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    text-shadow: 0 1px 2px #000;
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .ficha-tablero:active { cursor: grabbing; }
+  .forma-ficha {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    border: 2px solid #fafafa;
+    background: #27272a;
+    box-shadow: 0 2px 6px #0009;
+  }
+  .ficha-tablero.seleccionada { outline: 3px solid #facc15; outline-offset: 2px; }
+  .foto-ficha { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .inicial-ficha { z-index: 1; font-size: clamp(12px, 2vw, 22px); }
+  .ficha-tablero small { position: absolute; z-index: 1; bottom: 1px; min-width: 16px; padding: 1px 3px; border-radius: 8px; background: #09090bd9; font-size: 9px; font-weight: 600; }
+  .menu-ficha {
+    position: fixed; z-index: 20; display: flex; flex-direction: column; gap: 2px;
+    min-width: 150px; padding: 4px; background: #1c1c1f; border: 1px solid #3f3f46;
+    border-radius: 5px; box-shadow: 0 6px 18px #0009;
+  }
+  .menu-ficha button { padding: 6px 8px; border: 0; border-radius: 3px; color: #f4f4f5; background: transparent; text-align: left; cursor: pointer; font: inherit; }
+  .menu-ficha button:hover { background: #34343a; }
+  .menu-ficha button.peligro:hover { color: white; background: #b91c1c; }
+  .menu-ficha button:focus-visible { outline: 2px solid #60a5fa; outline-offset: -2px; }
 </style>

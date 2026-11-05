@@ -11,12 +11,30 @@
     opacidad: number;
   }
 
+  interface Mapa {
+    id: number;
+    id_zona: number;
+    nombre: string;
+    url_imagen_fondo: string | null;
+    ancho: number;
+    alto: number;
+    rejilla: number;
+    rejilla_visible: boolean;
+    color_opacidad: number[];
+    grosor: number;
+    orden: number;
+  }
+
   let {
     rejilla = $bindable(),
-    mapaActual = null
+    mapaActual = null,
+    onMapaGuardado,
+    onError
   }: {
     rejilla: Rejilla;
-    mapaActual?: any;
+    mapaActual?: Pick<Mapa, "id"> | null;
+    onMapaGuardado?: (mapa: Mapa) => void;
+    onError?: (error: unknown) => void;
   } = $props();
 
   const TAMANO_MIN = 5;
@@ -26,7 +44,7 @@
   let barraRef: HTMLDivElement | null = $state(null);
   let temporizadorGuardado: ReturnType<typeof setTimeout> | null = null;
   let hayCambiosPendientes = false;
-  let mapaActivoCopia: any = null;
+  let mapaActivoCopia: Pick<Mapa, "id"> | null = null;
 
   function hexToRgba(hex: string, opacidad: number): number[] {
     const limpio = hex.replace("#", "");
@@ -60,26 +78,31 @@
 
   export async function forzarGuardadoInmediato() {
     if (hayCambiosPendientes) {
-      await guardarCambios(mapaActual);
+      return await guardarCambios(mapaActual);
     }
+    return true;
   }
 
-  async function guardarCambios(mapaRef: any) {
-    if (!hayCambiosPendientes || !mapaRef || !mapaRef.id) return;
+  async function guardarCambios(mapaRef: Pick<Mapa, "id"> | null | undefined): Promise<boolean> {
+    if (!hayCambiosPendientes || !mapaRef || !mapaRef.id) return true;
     if (temporizadorGuardado) clearTimeout(temporizadorGuardado);
     hayCambiosPendientes = false;
 
-    const mapaModificado = {
-      ...mapaRef,
-      rejilla: Math.round(rejilla.tamano),
-      grosor: Math.round(rejilla.grosor),
-      color_opacidad: hexToRgba(rejilla.color, rejilla.opacidad)
-    };
-
     try {
-      await invoke("modificar_mapa", { mapa: mapaModificado });
+      const mapaGuardado = await invoke<Mapa>("actualizar_rejilla_mapa", {
+        mapaId: mapaRef.id,
+        rejilla: Math.round(rejilla.tamano),
+        rejillaVisible: rejilla.visible !== false,
+        grosor: Math.round(rejilla.grosor),
+        colorOpacidad: hexToRgba(rejilla.color, rejilla.opacidad)
+      });
+      mapaActivoCopia = mapaGuardado;
+      onMapaGuardado?.(mapaGuardado);
+      return true;
     } catch (err) {
-      console.error("Error al persistir cambios de rejilla en Rust:", err);
+      hayCambiosPendientes = true;
+      onError?.(err);
+      return false;
     }
   }
 

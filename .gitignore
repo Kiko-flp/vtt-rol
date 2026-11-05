@@ -1,4 +1,5 @@
 .DS_Store
+.vs/
 node_modules
 /build
 /.svelte-kit
@@ -11,3 +12,4 @@ vite.config.ts.timestamp-*
 deltas.jsonl
 partida.json
 historial_personal.txt
+*.paint

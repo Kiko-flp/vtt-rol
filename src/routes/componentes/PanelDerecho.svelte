@@ -9,6 +9,7 @@
     comandoChat = $bindable(""),
     onSeleccionarInstancia,
     onModificarVida,
+    onRetirarInstancia,
     onEnviarTirada
   } = $props();
 
@@ -77,9 +78,10 @@
     }
   }
 
-  let enemigos = $derived(instancias.filter((i) => i.base.tipo === "Enemigo"));
-  let npcs = $derived(instancias.filter((i) => i.base.tipo === "NPC"));
-  let jugadores = $derived(instancias.filter((i) => i.base.tipo === "Jugador"));
+  let fichasColocadas = $derived(instancias.filter((i) => i.activo && i.id_mapa !== null));
+  let enemigos = $derived(fichasColocadas.filter((i) => i.base.tipo === "Enemigo"));
+  let npcs = $derived(fichasColocadas.filter((i) => i.base.tipo === "NPC"));
+  let jugadores = $derived(fichasColocadas.filter((i) => i.base.tipo === "Jugador"));
 </script>
 
 <aside class="panel-derecho">
@@ -87,7 +89,10 @@
   <div class="sub-fichas-activas">
     <span class="titulo-mini">FICHAS ACTIVAS</span>
     <div class="scroll-fichas">
-      <div class="grupo rojo">ENEMIGOS</div>
+      {#if fichasColocadas.length === 0}
+        <div class="sin-fichas">Arrastra una ficha al tablero para colocarla.</div>
+      {/if}
+      <div class="grupo">ENEMIGOS</div>
       {#each enemigos as e}
         <button
           type="button"
@@ -102,7 +107,7 @@
         </button>
       {/each}
 
-      <div class="grupo azul">NPCs</div>
+      <div class="grupo">NPCs</div>
       {#each npcs as n}
         <button
           type="button"
@@ -111,13 +116,13 @@
           class:seleccionado={instanciaSeleccionada?.id_instancia === n.id_instancia}
           onclick={() => onSeleccionarInstancia(n)}
         >
-          <span class="icono rombo"></span>
+          <span class="icono cuadrado"></span>
           <span class="nombre">{n.base.nombre}</span>
           <span class="pv">{n.vida_actual}</span>
         </button>
       {/each}
 
-      <div class="grupo verde">JUGADORES</div>
+      <div class="grupo">JUGADORES</div>
       {#each jugadores as j}
         <button
           type="button"
@@ -126,7 +131,7 @@
           class:seleccionado={instanciaSeleccionada?.id_instancia === j.id_instancia}
           onclick={() => onSeleccionarInstancia(j)}
         >
-          <span class="icono circulo"></span>
+          <span class="icono cuadrado"></span>
           <span class="nombre">{j.base.nombre}</span>
           <span class="pv">{j.vida_actual}/{j.base.vida_max}</span>
         </button>
@@ -169,6 +174,9 @@
             <button onclick={() => onModificarVida(instanciaSeleccionada, 1)}>+</button>
           </div>
         </div>
+        <button class="btn-retirar" onclick={() => onRetirarInstancia(instanciaSeleccionada)}>
+          Retirar del mapa
+        </button>
       </div>
     {:else}
       <div class="sin-seleccion">Pulsa una ficha para ver sus parámetros</div>
@@ -223,10 +231,7 @@
   /* Subpágina 5 */
   .sub-fichas-activas { flex: 1.2; display: flex; flex-direction: column; overflow: hidden; }
   .scroll-fichas { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-  .grupo { font-size: 10px; font-weight: bold; margin-top: 4px; border-bottom: 1px solid; }
-  .grupo.rojo { color: #ef4444; border-color: #ef4444; }
-  .grupo.azul { color: #3b82f6; border-color: #3b82f6; }
-  .grupo.verde { color: #22c55e; border-color: #22c55e; }
+  .grupo { color: #d4d4d8; font-size: 10px; font-weight: bold; margin-top: 4px; border-bottom: 1px solid #52525b; }
   .fila-ficha {
     display: flex; align-items: center; gap: 6px; background: #1f1f23; padding: 4px 6px; border-radius: 4px; cursor: pointer;
     /* reset de botón para que se vea igual que el div anterior */
@@ -234,10 +239,9 @@
   }
   .fila-ficha.seleccionado { border-color: #3b82f6; }
   .fila-ficha.muerto { opacity: 0.35; filter: grayscale(100%); }
+  .sin-fichas { color: #71717a; text-align: center; padding: 8px 4px; font-size: 10px; }
   .icono { width: 10px; height: 10px; flex-shrink: 0; }
-  .cuadrado { background: #ef4444; }
-  .rombo { background: #3b82f6; transform: rotate(45deg); }
-  .circulo { background: #22c55e; border-radius: 50%; }
+  .cuadrado { background: #d4d4d8; }
   .nombre { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 
   /* Subpágina 6: Parámetros aumentados */
@@ -260,6 +264,8 @@
     background: #3f3f46; color: white; border: none; width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-weight: bold;
   }
   .sin-seleccion { color: #71717a; text-align: center; margin: auto 0; font-size: 11px; }
+  .btn-retirar { margin-top: 6px; background: #3f3f46; border: 1px solid #52525b; color: #f4f4f5; border-radius: 4px; padding: 5px; cursor: pointer; font: inherit; }
+  .btn-retirar:hover { background: #7f1d1d; border-color: #ef4444; }
 
   /* Subpágina 7: Tiradas + Chat ampliado */
   .sub-tiradas {

@@ -14,11 +14,22 @@
     onSeleccionarZona,
     onSeleccionarMapa,
     onRecargarZonas,
-    onRecargarMapas
+    onRecargarMapas,
+    onCrearEntidad,
+    onEditarEntidad,
+    onError
   } = $props();
 
   let busqueda = $state("");
-  let filtroZona = $state("todos");
+  let nuevaEntidad = $state({
+    nombre: "",
+    tipo: "Enemigo",
+    vidaMax: 10,
+    armadura: 0,
+    velocidad: 6,
+    rangoArma: 1
+  });
+  let errorEntidad = $state("");
 
   // Edición en línea
   let editandoZonaId = $state(null);
@@ -29,6 +40,7 @@
   // Menús contextuales
   let menuZona = $state(null);
   let menuMapa = $state(null);
+  let menuEntidad = $state(null);
 
   // Selector manual de imagen
   let inputArchivoRef = $state(null);
@@ -54,7 +66,10 @@
     }
   });
 
-  // Estado del arrastre táctil/puntero
+  /**
+   * @typedef {{ id: number, nombre: string, foto_url?: string | null, url_imagen_fondo?: string | null }} ElementoArrastrable
+   */
+  /** @type {{ activo: boolean, tipo: "zona" | "mapa" | "entidad" | null, item: ElementoArrastrable | null, x: number, y: number, ancho: number, alto: number, offsetRelX: number, offsetRelY: number, indiceOrigen: number, indiceDestino: number }} */
   let arrastre = $state({
     activo: false,
     tipo: null, // 'zona' | 'mapa'
@@ -71,14 +86,105 @@
 
   let unlistenDrop = null;
 
-  let entidadesFiltradas = $derived(
-    banco.filter((e) => {
-      if (e.tipo === "Jugador") return false;
-      const coincideNombre = e.nombre.toLowerCase().includes(busqueda.toLowerCase());
-      const coincideZona = filtroZona === "todos" || e.zona_id === zonaSeleccionadaId;
-      return coincideNombre && coincideZona;
-    })
+  let entidadesJugadores = $derived(
+    banco.filter((entidad) =>
+      entidad.tipo === "Jugador" &&
+      entidad.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    )
   );
+  let entidadesZona = $derived(
+    banco.filter((entidad) =>
+      entidad.tipo !== "Jugador" &&
+      entidad.zona_id === zonaSeleccionadaId &&
+      entidad.nombre.toLowerCase().includes(busqueda.toLowerCase())
+    )
+  );
+
+  async function crearEntidad() {
+    if (!nuevaEntidad.nombre.trim()) {
+      errorEntidad = "Escribe un nombre para la ficha.";
+      return;
+    }
+
+    try {
+      await onCrearEntidad({
+        ...nuevaEntidad,
+        nombre: nuevaEntidad.nombre.trim()
+      });
+      nuevaEntidad.nombre = "";
+      errorEntidad = "";
+    } catch (err) {
+      errorEntidad = String(err);
+    }
+  }
+
+  /**
+   * @param {PointerEvent} e
+   * @param {ElementoArrastrable} entidad
+   */
+  function iniciarArrastreEntidad(e, entidad) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const inicioX = e.clientX;
+    const inicioY = e.clientY;
+    let inicioArrastre = false;
+
+    function quitarEscuchas() {
+      window.removeEventListener("pointermove", alMover);
+      window.removeEventListener("pointerup", alSoltar);
+      window.removeEventListener("pointercancel", alCancelar);
+    }
+
+    /** @param {PointerEvent} evento */
+    function alMover(evento) {
+      if (evento.pointerId !== e.pointerId) return;
+      if (!inicioArrastre && Math.hypot(evento.clientX - inicioX, evento.clientY - inicioY) < 4) return;
+
+      inicioArrastre = true;
+      arrastre.activo = true;
+      arrastre.tipo = "entidad";
+      arrastre.item = entidad;
+      arrastre.x = evento.clientX;
+      arrastre.y = evento.clientY;
+      arrastre.ancho = rect.width;
+      arrastre.alto = rect.height;
+      arrastre.offsetRelX = inicioX - rect.left;
+      arrastre.offsetRelY = inicioY - rect.top;
+    }
+
+    /** @param {PointerEvent} evento */
+    function alSoltar(evento) {
+      if (evento.pointerId !== e.pointerId) return;
+      quitarEscuchas();
+      if (inicioArrastre) {
+        const tablero = document.elementFromPoint(evento.clientX, evento.clientY)?.closest(".tablero");
+        if (tablero) {
+          window.dispatchEvent(new CustomEvent("vtt-colocar-entidad", {
+            detail: {
+              entidadId: entidad.id,
+              clientX: evento.clientX,
+              clientY: evento.clientY
+            }
+          }));
+        }
+      }
+      arrastre.activo = false;
+      arrastre.item = null;
+    }
+
+    /** @param {PointerEvent} evento */
+    function alCancelar(evento) {
+      if (evento.pointerId !== e.pointerId) return;
+      quitarEscuchas();
+      arrastre.activo = false;
+      arrastre.item = null;
+    }
+
+    window.addEventListener("pointermove", alMover);
+    window.addEventListener("pointerup", alSoltar);
+    window.addEventListener("pointercancel", alCancelar);
+  }
 
   async function generarMiniaturaUltraBaja(src) {
     if (!src) return "";
@@ -176,31 +282,38 @@
       window.removeEventListener("pointerup", onPointerUp);
 
       if (arrastre.activo) {
-        // Solo enviamos a Rust los cambios reales al soltar
-        if (arrastre.tipo === "zona") {
-          for (let i = 0; i < zonasVisuales.length; i++) {
-            if (zonasVisuales[i].orden !== i) {
-              zonasVisuales[i].orden = i;
-              await invoke("modificar_zona", { zona: zonasVisuales[i] });
+        const tipoArrastre = arrastre.tipo;
+        try {
+          if (arrastre.tipo === "zona") {
+            for (let i = 0; i < zonasVisuales.length; i++) {
+              const zona = zonasVisuales[i];
+              if (zona.orden !== i) {
+                await invoke("reordenar_zona", { zonaId: zona.id, orden: i });
+              }
             }
-          }
-          await onRecargarZonas();
-        } else {
-          for (let i = 0; i < mapasVisuales.length; i++) {
-            if (mapasVisuales[i].orden !== i) {
-              mapasVisuales[i].orden = i;
-              await invoke("modificar_mapa", { mapa: mapasVisuales[i] });
+            await onRecargarZonas();
+          } else {
+            for (let i = 0; i < mapasVisuales.length; i++) {
+              const mapa = mapasVisuales[i];
+              if (mapa.orden !== i) {
+                await invoke("reordenar_mapa", { mapaId: mapa.id, orden: i });
+              }
             }
+            await onRecargarMapas(zonaSeleccionadaId);
           }
-          await onRecargarMapas(zonaSeleccionadaId);
+        } catch (err) {
+          onError?.(err);
+          if (tipoArrastre === "zona") {
+            await onRecargarZonas();
+          } else {
+            await onRecargarMapas(zonaSeleccionadaId);
+          }
         }
-      } else {
+      } else if (arrastre.tipo === "mapa") {
         // Si no se arrastró, fue un clic estándar de selección
-        if (tipo === "zona") {
-          onSeleccionarZona(item.id);
-        } else {
-          onSeleccionarMapa(item);
-        }
+        await onSeleccionarMapa(item);
+      } else {
+        onSeleccionarZona(item.id);
       }
 
       arrastre.activo = false;
@@ -215,24 +328,32 @@
   // OPERACIONES BACKEND (Zonas y Mapas)
   // ==========================================
   async function anadirZona() {
-    const nuevaZona = await invoke("crear_zona");
-    await onRecargarZonas();
-    onSeleccionarZona(nuevaZona.id);
+    try {
+      const nuevaZona = await invoke("crear_zona");
+      await onRecargarZonas();
+      onSeleccionarZona(nuevaZona.id);
+    } catch (err) {
+      onError?.(err);
+    }
   }
 
   async function anadirMapa(urlImagen = null) {
-    const nuevoMapa = await invoke("crear_mapa", {
-      idZona: zonaSeleccionadaId,
-      urlImagenFondo: urlImagen || null
-    });
+    try {
+      const nuevoMapa = await invoke("crear_mapa", {
+        idZona: zonaSeleccionadaId,
+        urlImagenFondo: urlImagen || null
+      });
 
-    if (nuevoMapa.url_imagen_fondo) {
-      const miniatura = await generarMiniaturaUltraBaja(nuevoMapa.url_imagen_fondo);
-      if (miniatura) miniaturasPorMapa[nuevoMapa.id] = miniatura;
+      if (nuevoMapa.url_imagen_fondo) {
+        const miniatura = await generarMiniaturaUltraBaja(nuevoMapa.url_imagen_fondo);
+        if (miniatura) miniaturasPorMapa[nuevoMapa.id] = miniatura;
+      }
+
+      const mapasActualizados = await onRecargarMapas(zonaSeleccionadaId);
+      await onSeleccionarMapa(mapasActualizados?.find((mapa) => mapa.id === nuevoMapa.id) ?? nuevoMapa);
+    } catch (err) {
+      onError?.(err);
     }
-
-    await onRecargarMapas(zonaSeleccionadaId);
-    onSeleccionarMapa(nuevoMapa);
   }
 
 
@@ -277,14 +398,21 @@
   }
 
   async function aplicarNuevaImagen(mapa, urlImagen) {
-    mapa.url_imagen_fondo = urlImagen;
-    const miniatura = await generarMiniaturaUltraBaja(urlImagen);
-    if (miniatura) miniaturasPorMapa[mapa.id] = miniatura;
+    try {
+      await invoke("actualizar_imagen_mapa", {
+        mapaId: mapa.id,
+        urlImagenFondo: urlImagen
+      });
+      const miniatura = await generarMiniaturaUltraBaja(urlImagen);
+      if (miniatura) miniaturasPorMapa[mapa.id] = miniatura;
 
-    await invoke("modificar_mapa", { mapa });
-    await onRecargarMapas(zonaSeleccionadaId);
-    if (mapaActual?.id === mapa.id) {
-      onSeleccionarMapa(mapa);
+      const mapasActualizados = await onRecargarMapas(zonaSeleccionadaId);
+      const mapaActualizado = mapasActualizados?.find((item) => item.id === mapa.id);
+      if (mapaActual?.id === mapa.id && mapaActualizado) {
+        await onSeleccionarMapa(mapaActualizado);
+      }
+    } catch (err) {
+      onError?.(err);
     }
   }
 
@@ -339,16 +467,23 @@
     editandoZonaId = null;
     const nuevoNombre = textoEdicionZona.trim() || z.nombre;
     if (nuevoNombre !== z.nombre) {
-      z.nombre = nuevoNombre;
-      await invoke("modificar_zona", { zona: z });
-      await onRecargarZonas();
+      try {
+        await invoke("renombrar_zona", { zonaId: z.id, nombre: nuevoNombre });
+        await onRecargarZonas();
+      } catch (err) {
+        onError?.(err);
+      }
     }
   }
 
   async function borrarZona(z) {
     cerrarMenus();
-    await invoke("eliminar_zona", { zona: z });
-    await onRecargarZonas();
+    try {
+      await invoke("eliminar_zona", { zona: z });
+      await onRecargarZonas();
+    } catch (err) {
+      onError?.(err);
+    }
   }
 
   function iniciarEdicionMapa(m) {
@@ -362,17 +497,24 @@
     editandoMapaId = null;
     const nuevoNombre = textoEdicionMapa.trim() || m.nombre;
     if (nuevoNombre !== m.nombre) {
-      m.nombre = nuevoNombre;
-      await invoke("modificar_mapa", { mapa: m });
-      await onRecargarMapas(zonaSeleccionadaId);
+      try {
+        await invoke("renombrar_mapa", { mapaId: m.id, nombre: nuevoNombre });
+        await onRecargarMapas(zonaSeleccionadaId);
+      } catch (err) {
+        onError?.(err);
+      }
     }
   }
 
   async function borrarMapa(m) {
     cerrarMenus();
-    await invoke("borrar_mapa", { mapa: m });
-    delete miniaturasPorMapa[m.id];
-    await onRecargarMapas(zonaSeleccionadaId);
+    try {
+      await invoke("borrar_mapa", { mapa: m });
+      delete miniaturasPorMapa[m.id];
+      await onRecargarMapas(zonaSeleccionadaId);
+    } catch (err) {
+      onError?.(err);
+    }
   }
 
   function abrirSelectorManual(mapa) {
@@ -387,10 +529,15 @@
     const archivo = files[0];
     const reader = new FileReader();
     reader.onload = async () => {
-      await asignarImagenAMapa(mapaParaCambiarImagen, reader.result);
-      mapaParaCambiarImagen = null;
-      e.target.value = "";
+      try {
+        await asignarImagenAMapa(mapaParaCambiarImagen, reader.result);
+        mapaParaCambiarImagen = null;
+        e.target.value = "";
+      } catch (err) {
+        onError?.(err);
+      }
     };
+    reader.onerror = () => onError?.(new Error("No se pudo leer la imagen del mapa."));
     reader.readAsDataURL(archivo);
   }
 
@@ -406,9 +553,23 @@
     menuMapa = { x: e.clientX, y: e.clientY, mapa: m };
   }
 
+  function abrirMenuEntidad(e, entidad) {
+    e.preventDefault();
+    e.stopPropagation();
+    cerrarMenus();
+    menuEntidad = { x: e.clientX, y: e.clientY, entidad };
+  }
+
+  function editarEntidadDesdeMenu() {
+    const entidad = menuEntidad?.entidad;
+    cerrarMenus();
+    if (entidad) onEditarEntidad?.(entidad);
+  }
+
   function cerrarMenus() {
     menuZona = null;
     menuMapa = null;
+    menuEntidad = null;
   }
 </script>
 
@@ -522,19 +683,104 @@
   <div class="bloque-abajo">
     <div class="sub-busqueda">
       <input type="text" placeholder="Buscar..." bind:value={busqueda} class="input-buscar" />
-      <div class="radios-filtro">
-        <label><input type="radio" bind:group={filtroZona} value="todos" /> Todos</label>
-        <label><input type="radio" bind:group={filtroZona} value="actual" /> Zona</label>
-      </div>
     </div>
 
-    <div class="sub-entidades">
-      {#each entidadesFiltradas as item (item.id)}
-        <div class="fila-entidad" draggable="true" title="Arrastra al mapa">
-          <div class="forma {item.tipo.toLowerCase()}"></div>
-          <span class="texto-recortado">{item.nombre}</span>
+    <details class="crear-entidad">
+      <summary>Crear ficha</summary>
+      <form onsubmit={(e) => { e.preventDefault(); crearEntidad(); }}>
+        <input bind:value={nuevaEntidad.nombre} maxlength="80" placeholder="Nombre" aria-label="Nombre de la ficha" />
+        <select bind:value={nuevaEntidad.tipo} aria-label="Tipo de ficha">
+          <option value="Enemigo">Enemigo</option>
+          <option value="NPC">NPC</option>
+          <option value="Jugador">Jugador</option>
+        </select>
+        <div class="campos-entidad">
+          <label>Vida <input type="number" min="1" max="32767" bind:value={nuevaEntidad.vidaMax} /></label>
+          <label>Armadura <input type="number" min="0" max="32767" bind:value={nuevaEntidad.armadura} /></label>
+          <label>Velocidad <input type="number" min="0" max="32767" bind:value={nuevaEntidad.velocidad} /></label>
+          <label>Rango <input type="number" min="0" max="32767" bind:value={nuevaEntidad.rangoArma} /></label>
         </div>
-      {/each}
+        {#if errorEntidad}<span class="error-entidad" role="alert">{errorEntidad}</span>{/if}
+        <button type="submit">Guardar ficha</button>
+      </form>
+    </details>
+
+    <div class="sub-entidades">
+      <div class="grupo-entidades">
+        <span class="titulo-grupo">JUGADORES · TODAS LAS ZONAS</span>
+        {#each entidadesJugadores as item (item.id)}
+          <button
+            type="button"
+            class="fila-entidad"
+            title="Arrastra al mapa para colocar una ficha"
+            onpointerdown={(e) => iniciarArrastreEntidad(e, item)}
+            oncontextmenu={(e) => abrirMenuEntidad(e, item)}
+            ondblclick={(e) => {
+              e.stopPropagation();
+              onEditarEntidad?.(item);
+            }}
+          >
+            <div class="avatar-entidad">
+              {#if item.foto_url}
+                <img src={item.foto_url.startsWith("data:") || item.foto_url.startsWith("http") ? item.foto_url : convertFileSrc(item.foto_url)} alt="" />
+              {:else}
+                <span>{item.nombre.slice(0, 1).toUpperCase()}</span>
+              {/if}
+            </div>
+            <span class="texto-recortado">{item.nombre}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="grupo-entidades">
+        <span class="titulo-grupo">NPC · {zonas.find((zona) => zona.id === zonaSeleccionadaId)?.nombre ?? "ZONA"}</span>
+        {#each entidadesZona.filter((entidad) => entidad.tipo === "NPC") as item (item.id)}
+          <button
+            type="button"
+            class="fila-entidad"
+            title="Arrastra al mapa para colocar una ficha"
+            onpointerdown={(e) => iniciarArrastreEntidad(e, item)}
+            oncontextmenu={(e) => abrirMenuEntidad(e, item)}
+            ondblclick={(e) => {
+              e.stopPropagation();
+              onEditarEntidad?.(item);
+            }}
+          >
+            <div class="avatar-entidad">
+              {#if item.foto_url}
+                <img src={item.foto_url.startsWith("data:") || item.foto_url.startsWith("http") ? item.foto_url : convertFileSrc(item.foto_url)} alt="" />
+              {:else}
+                <span>{item.nombre.slice(0, 1).toUpperCase()}</span>
+              {/if}
+            </div>
+            <span class="texto-recortado">{item.nombre}</span>
+          </button>
+        {/each}
+      </div>
+      <div class="grupo-entidades">
+        <span class="titulo-grupo">ENEMIGOS · {zonas.find((zona) => zona.id === zonaSeleccionadaId)?.nombre ?? "ZONA"}</span>
+        {#each entidadesZona.filter((entidad) => entidad.tipo === "Enemigo") as item (item.id)}
+          <button
+            type="button"
+            class="fila-entidad"
+            title="Arrastra al mapa para colocar una ficha"
+            onpointerdown={(e) => iniciarArrastreEntidad(e, item)}
+            oncontextmenu={(e) => abrirMenuEntidad(e, item)}
+            ondblclick={(e) => {
+              e.stopPropagation();
+              onEditarEntidad?.(item);
+            }}
+          >
+            <div class="avatar-entidad">
+              {#if item.foto_url}
+                <img src={item.foto_url.startsWith("data:") || item.foto_url.startsWith("http") ? item.foto_url : convertFileSrc(item.foto_url)} alt="" />
+              {:else}
+                <span>{item.nombre.slice(0, 1).toUpperCase()}</span>
+              {/if}
+            </div>
+            <span class="texto-recortado">{item.nombre}</span>
+          </button>
+        {/each}
+      </div>
     </div>
   </div>
 </aside>
@@ -556,7 +802,7 @@
       <div class="item-zona clon activo">
         <span class="texto-recortado">{arrastre.item.nombre}</span>
       </div>
-    {:else}
+    {:else if arrastre.tipo === 'mapa'}
       <div class="tarjeta-mapa clon seleccionado">
         {#if arrastre.item.url_imagen_fondo && miniaturasPorMapa[arrastre.item.id]}
           <div class="contenedor-low">
@@ -566,6 +812,17 @@
           <span class="previa-mapa">🗺️</span>
         {/if}
         <span class="nombre-mapa texto-recortado">{arrastre.item.nombre}</span>
+      </div>
+    {:else}
+      <div class="fila-entidad ficha-flotante">
+        <div class="avatar-entidad">
+          {#if arrastre.item.foto_url}
+            <img src={arrastre.item.foto_url.startsWith("data:") || arrastre.item.foto_url.startsWith("http") ? arrastre.item.foto_url : convertFileSrc(arrastre.item.foto_url)} alt="" />
+          {:else}
+            <span>{arrastre.item.nombre.slice(0, 1).toUpperCase()}</span>
+          {/if}
+        </div>
+        <span class="texto-recortado">{arrastre.item.nombre}</span>
       </div>
     {/if}
   </div>
@@ -584,6 +841,12 @@
     <button onclick={() => abrirSelectorManual(menuMapa.mapa)}>Cambiar imagen</button>
     <button onclick={() => iniciarEdicionMapa(menuMapa.mapa)}>Cambiar nombre</button>
     <button class="peligro" onclick={() => borrarMapa(menuMapa.mapa)}>Borrar mapa</button>
+  </div>
+{/if}
+
+{#if menuEntidad}
+  <div class="menu-contextual" style="top: {menuEntidad.y}px; left: {menuEntidad.x}px;" onclick={(e) => e.stopPropagation()}>
+    <button onclick={editarEntidadDesdeMenu}>Editar datos</button>
   </div>
 {/if}
 
@@ -695,12 +958,22 @@
   .bloque-abajo { flex: 1; display: flex; flex-direction: column; overflow: hidden; gap: 5px; }
   .sub-busqueda { display: flex; flex-direction: column; gap: 3px; }
   .input-buscar { background: #09090b; border: 1px solid #3f3f46; color: white; padding: 3px 5px; border-radius: 4px; font-size: 11px; }
-  .radios-filtro { display: flex; gap: 6px; font-size: 10px; color: #a1a1aa; }
-  .sub-entidades { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
-  .fila-entidad { display: flex; align-items: center; gap: 6px; background: #27272a; padding: 5px; border-radius: 4px; cursor: grab; }
-  .forma { width: 12px; height: 12px; flex-shrink: 0; }
-  .forma.enemigo { background: #ef4444; }
-  .forma.npc { background: #3b82f6; transform: rotate(45deg); }
+  .crear-entidad { flex-shrink: 0; background: #1b1b1f; border: 1px solid #3f3f46; border-radius: 4px; padding: 4px 6px; }
+  .crear-entidad summary { cursor: pointer; color: #e4e4e7; font-size: 11px; }
+  .crear-entidad form { display: flex; flex-direction: column; gap: 4px; margin-top: 5px; }
+  .crear-entidad input, .crear-entidad select { min-width: 0; background: #09090b; border: 1px solid #3f3f46; color: white; border-radius: 3px; padding: 3px; font: inherit; }
+  .campos-entidad { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+  .campos-entidad label { display: flex; align-items: center; justify-content: space-between; gap: 3px; color: #a1a1aa; font-size: 9px; }
+  .campos-entidad input { width: 44px; }
+  .crear-entidad button { background: #2563eb; border: 0; border-radius: 3px; color: white; padding: 4px; cursor: pointer; font: inherit; }
+  .error-entidad { color: #f87171; overflow-wrap: anywhere; }
+  .sub-entidades { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .grupo-entidades { display: flex; flex-direction: column; gap: 3px; }
+  .titulo-grupo { color: #a1a1aa; font-size: 9px; font-weight: 700; padding: 2px 1px; }
+  .fila-entidad { width: 100%; display: flex; align-items: center; gap: 6px; background: #27272a; border: 0; color: inherit; text-align: left; font: inherit; padding: 5px; border-radius: 4px; cursor: grab; touch-action: none; }
+  .fila-entidad:hover { background: #34343a; }
+  .avatar-entidad { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; overflow: hidden; border: 2px solid #fafafa; border-radius: 0; background: #09090b; color: white; font-weight: bold; }
+  .avatar-entidad img { width: 100%; height: 100%; object-fit: cover; }
 
   .menu-contextual {
     position: fixed; background: #1c1c1f; border: 1px solid #3f3f46; border-radius: 4px;

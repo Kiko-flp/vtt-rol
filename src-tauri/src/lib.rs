@@ -5,11 +5,16 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use tablero_general::dados::tirar_dado;
+use tablero_general::ficha::{
+    actualizar_entidad, colocar_entidad, crear_entidad, modificar_vida, mover_instancia,
+    obtener_banco_entidades, obtener_instancias_activas, retirar_instancia,
+};
 use tablero_general::partida::{
     compactar_partida, iniciar_autoguardado, // <-- Importamos ambas
-    obtener_banco_entidades, obtener_historial_personal, obtener_historial_tiradas,
-    obtener_instancias_activas, obtener_mapas_zona, obtener_zonas, crear_zona, eliminar_zona,
-    modificar_zona, crear_mapa, modificar_mapa, borrar_mapa, AppState, EstadoPartida,
+    obtener_historial_personal, obtener_historial_tiradas, obtener_mapas_zona, obtener_zonas,
+    actualizar_imagen_mapa, actualizar_rejilla_mapa, borrar_mapa, crear_mapa, crear_zona,
+    eliminar_zona, renombrar_mapa, renombrar_zona, reordenar_mapa, reordenar_zona,
+    AppState, EstadoPartida,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -38,11 +43,21 @@ pub fn run() {
             obtener_instancias_activas,
             obtener_historial_tiradas,
             obtener_historial_personal,
+            crear_entidad,
+            actualizar_entidad,
+            colocar_entidad,
+            mover_instancia,
+            modificar_vida,
+            retirar_instancia,
             crear_zona,
             eliminar_zona,
-            modificar_zona, 
-            crear_mapa, 
-            modificar_mapa, 
+            renombrar_zona,
+            reordenar_zona,
+            crear_mapa,
+            renombrar_mapa,
+            reordenar_mapa,
+            actualizar_imagen_mapa,
+            actualizar_rejilla_mapa,
             borrar_mapa,
         ])
         .run(tauri::generate_context!())
