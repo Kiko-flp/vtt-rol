@@ -1,8 +1,8 @@
 <!-- src/routes/+page.svelte -->
-<!-- src/routes/+page.svelte -->
 <script>
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { iniciarImagenes } from "$lib/imagenes";
 
   import PanelIzquierdo from "./componentes/PanelIzquierdo.svelte";
   import PanelDerecho from "./componentes/PanelDerecho.svelte";
@@ -37,6 +37,7 @@
 
   onMount(async () => {
     try {
+      await iniciarImagenes(); // necesario antes de mostrar ningún mapa con imagen
       await recargarZonas();
       if (zonas.length > 0) {
         zonaSeleccionadaId = zonas[0].id;

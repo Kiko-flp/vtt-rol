@@ -201,7 +201,7 @@ pub fn tirar_dado(comando: String, state: State<'_, AppState>) -> Result<String,
     registrar_tirada(&state, &resultado);
 
     // 2. Guarda el comando en el historial personal de este cliente directamente en disco
-    registrar_comando_personal(&comando);
+    registrar_comando_personal(&state, &comando);
 
     Ok(resultado)
 }

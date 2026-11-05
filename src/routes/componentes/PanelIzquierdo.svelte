@@ -2,7 +2,9 @@
 <script>
   import { onMount, onDestroy } from "svelte";
   import { flip } from "svelte/animate";
-  import { invoke, convertFileSrc } from "@tauri-apps/api/core";
+  import { invoke } from "@tauri-apps/api/core";
+  import { open } from "@tauri-apps/plugin-dialog";
+  import { urlDeImagen } from "$lib/imagenes";
   import { getCurrentWebview } from "@tauri-apps/api/webview";
 
   let {
@@ -29,10 +31,6 @@
   // Menús contextuales
   let menuZona = $state(null);
   let menuMapa = $state(null);
-
-  // Selector manual de imagen
-  let inputArchivoRef = $state(null);
-  let mapaParaCambiarImagen = $state(null);
 
   // Miniaturas ultra-bajas reactivas
   let miniaturasPorMapa = $state({});
@@ -105,7 +103,7 @@
   $effect(() => {
     for (const m of mapas) {
       if (m.url_imagen_fondo && !miniaturasPorMapa[m.id]) {
-        generarMiniaturaUltraBaja(m.url_imagen_fondo).then((mini) => {
+        generarMiniaturaUltraBaja(urlDeImagen(m.url_imagen_fondo)).then((mini) => {
           if (mini) miniaturasPorMapa[m.id] = mini;
         });
       }
@@ -220,14 +218,25 @@
     onSeleccionarZona(nuevaZona.id);
   }
 
-  async function anadirMapa(urlImagen = null) {
+  // `rutaOrigen`: ruta del sistema de una imagen que se copia a la carpeta de datos de la app.
+  async function anadirMapa(rutaOrigen = null) {
+    let referencia = null;
+    if (rutaOrigen) {
+      try {
+        referencia = await invoke("importar_imagen", { origen: rutaOrigen });
+      } catch (err) {
+        console.error("No se pudo importar la imagen:", err);
+        return;
+      }
+    }
+
     const nuevoMapa = await invoke("crear_mapa", {
       idZona: zonaSeleccionadaId,
-      urlImagenFondo: urlImagen || null
+      urlImagenFondo: referencia
     });
 
     if (nuevoMapa.url_imagen_fondo) {
-      const miniatura = await generarMiniaturaUltraBaja(nuevoMapa.url_imagen_fondo);
+      const miniatura = await generarMiniaturaUltraBaja(urlDeImagen(nuevoMapa.url_imagen_fondo));
       if (miniatura) miniaturasPorMapa[nuevoMapa.id] = miniatura;
     }
 
@@ -236,7 +245,7 @@
   }
 
 
-  let modalConfirmacion = $state(null); // { mapa, urlImagen }
+  let modalConfirmacion = $state(null); // { mapa, rutaOrigen }
   let posModal = $state({ x: 240, y: 90 });
 
   function iniciarArrastreModal(e) {
@@ -260,32 +269,44 @@
     window.addEventListener("pointerup", onPointerUp);
   }
 
-  async function asignarImagenAMapa(mapa, urlImagen) {
+  // `rutaOrigen` es una ruta del sistema (del selector de archivos o de un drop). La imagen
+  // solo se copia a la carpeta de datos cuando se confirma, así cancelar no deja archivos sueltos.
+  async function asignarImagenAMapa(mapa, rutaOrigen) {
     // Si ya tiene imagen, se abre (o se reemplaza si ya había uno abierto) la ventanita flotante
     if (mapa.url_imagen_fondo && mapa.url_imagen_fondo.trim() !== "") {
-      modalConfirmacion = { mapa, urlImagen };
+      modalConfirmacion = { mapa, rutaOrigen };
       return;
     }
-    await aplicarNuevaImagen(mapa, urlImagen);
+    await aplicarNuevaImagen(mapa, rutaOrigen);
   }
 
   async function confirmarReemplazoImagen() {
     if (!modalConfirmacion) return;
-    const { mapa, urlImagen } = modalConfirmacion;
+    const { mapa, rutaOrigen } = modalConfirmacion;
     modalConfirmacion = null;
-    await aplicarNuevaImagen(mapa, urlImagen);
+    await aplicarNuevaImagen(mapa, rutaOrigen);
   }
 
-  async function aplicarNuevaImagen(mapa, urlImagen) {
-    mapa.url_imagen_fondo = urlImagen;
-    const miniatura = await generarMiniaturaUltraBaja(urlImagen);
+  async function aplicarNuevaImagen(mapa, rutaOrigen) {
+    let referencia;
+    try {
+      // Copia la imagen a <datos>/imagenes y devuelve la ruta relativa, p. ej. "imagenes/ab12.png"
+      referencia = await invoke("importar_imagen", { origen: rutaOrigen });
+    } catch (err) {
+      console.error("No se pudo importar la imagen:", err);
+      return;
+    }
+
+    // Copia del mapa: no se modifica el objeto que pertenece a +page.svelte.
+    const mapaModificado = { ...mapa, url_imagen_fondo: referencia };
+
+    const miniatura = await generarMiniaturaUltraBaja(urlDeImagen(referencia));
     if (miniatura) miniaturasPorMapa[mapa.id] = miniatura;
 
-    await invoke("modificar_mapa", { mapa });
+    await invoke("modificar_mapa", { mapa: mapaModificado });
+    // Recargar los mapas también refresca el mapa abierto (recargarMapas en +page.svelte),
+    // así el tablero cambia de fondo sin más.
     await onRecargarMapas(zonaSeleccionadaId);
-    if (mapaActual?.id === mapa.id) {
-      onSeleccionarMapa(mapa);
-    }
   }
 
   // Drop de imágenes desde el SO
@@ -299,7 +320,6 @@
           const ruta = paths[0];
           if (!ruta.match(/\.(png|jpe?g|webp|gif|svg|bmp|avif)$/i)) return;
 
-          const urlFinal = convertFileSrc(ruta);
           const { x, y } = event.payload.position;
           const escala = window.devicePixelRatio || 1;
           const el = document.elementFromPoint(x / escala, y / escala);
@@ -309,13 +329,13 @@
             const id = Number(tarjeta.dataset.mapaId);
             const mapaDestino = mapas.find((m) => m.id === id);
             if (mapaDestino) {
-              await asignarImagenAMapa(mapaDestino, urlFinal);
+              await asignarImagenAMapa(mapaDestino, ruta);
               return;
             }
           }
 
           if (el?.closest(".sub-mapas")) {
-            await anadirMapa(urlFinal);
+            await anadirMapa(ruta);
           }
         }
       });
@@ -375,23 +395,18 @@
     await onRecargarMapas(zonaSeleccionadaId);
   }
 
-  function abrirSelectorManual(mapa) {
-    mapaParaCambiarImagen = mapa;
+  async function abrirSelectorManual(mapa) {
     cerrarMenus();
-    inputArchivoRef?.click();
-  }
-
-  function onArchivoSeleccionadoManualmente(e) {
-    const files = e.target.files;
-    if (!files || files.length === 0 || !mapaParaCambiarImagen) return;
-    const archivo = files[0];
-    const reader = new FileReader();
-    reader.onload = async () => {
-      await asignarImagenAMapa(mapaParaCambiarImagen, reader.result);
-      mapaParaCambiarImagen = null;
-      e.target.value = "";
-    };
-    reader.readAsDataURL(archivo);
+    const ruta = await open({
+      multiple: false,
+      directory: false,
+      filters: [
+        { name: "Imágenes", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "svg"] }
+      ]
+    });
+    if (typeof ruta === "string") {
+      await asignarImagenAMapa(mapa, ruta);
+    }
   }
 
   function abrirMenuZona(e, z) {
@@ -413,14 +428,6 @@
 </script>
 
 <svelte:window onclick={cerrarMenus} />
-
-<input
-  type="file"
-  accept="image/*"
-  bind:this={inputArchivoRef}
-  style="display: none;"
-  onchange={onArchivoSeleccionadoManualmente}
-/>
 
 <aside class="panel-izquierdo">
   <div class="bloque-arriba">

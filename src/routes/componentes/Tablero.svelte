@@ -1,7 +1,7 @@
 <!-- src/routes/componentes/Tablero.svelte -->
 <script>
   import { onMount, untrack, onDestroy } from 'svelte';
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { urlDeImagen } from '$lib/imagenes';
 
   let {
     mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' },
@@ -117,7 +117,7 @@
       ajustarVista();
     };
 
-    img.src = url.startsWith('http') || url.startsWith('data:') ? url : convertFileSrc(url);
+    img.src = urlDeImagen(url); // `url` es la ruta relativa guardada en el mapa
   }
 
   // ---------------------------------------------------------------------------
