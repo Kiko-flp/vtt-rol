@@ -27,7 +27,11 @@ pub struct Entidad {
     pub nombre: String,
     pub tipo: TipoEntidad,
     pub vida_max: i16,
+    #[serde(default)]
+    pub vida_es_publica: bool,
     pub armadura: i16,
+    #[serde(default)]
+    pub armadura_es_publica: bool,
     pub velocidad: i16,
     pub rango_arma: i16,
     pub cuerpo: Cuerpo,
@@ -37,10 +41,11 @@ pub struct Entidad {
     #[serde(default)]
     pub foto_url: Option<String>,
 
-    // Si falta en el JSON, se asume false
-    #[serde(default)]
-    pub es_publico: bool,
-
+    /* Concepto incorrecto debido a que prefiero que sea modular lo que es publico y que no
+    * Además, una ficha (excepto si es jugador) como concepto es público si tiene una instancia
+    *#[serde(default)]
+    *pub es_publico: bool,
+    */
     // Si falta en el JSON, se asume lista vacía []
     #[serde(default)]
     pub archivos_adjuntos: Vec<Option<String>>,
@@ -55,6 +60,8 @@ pub struct Instancia {
     pub id_instancia: u16,
     pub id_mapa: Option<u16>,
     pub base: Entidad,
+
+    //Si la base tiene que la vida no es pública no se comparte este parámetro
     pub vida_actual: i16,
     pub coordenadas: Coordenada,
 
