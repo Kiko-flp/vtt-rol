@@ -12,12 +12,12 @@ async function generar(src: string): Promise<string> {
     img.crossOrigin = "anonymous";
     img.onload = () => {
       const canvas = document.createElement("canvas");
-      canvas.width = 128;
-      canvas.height = 72;
+      canvas.width = 64;
+      canvas.height = 36;
       const ctx = canvas.getContext("2d");
       if (!ctx) return resolve("");
-      ctx.drawImage(img, 0, 0, 128, 72);
-      resolve(canvas.toDataURL("image/png", 0.3));
+      ctx.drawImage(img, 0, 0, 64, 36);
+      resolve(canvas.toDataURL("image/png"));
     };
     img.onerror = () => resolve("");
     img.src = src;
