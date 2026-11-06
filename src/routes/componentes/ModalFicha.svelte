@@ -1,6 +1,16 @@
 <script>
-  import { convertFileSrc } from "@tauri-apps/api/core";
+  import { urlDeImagen } from "$lib/imagenes";
 
+  /**
+   * @typedef {import("$lib/partida.svelte").Entidad} Entidad
+   * @typedef {import("$lib/partida.svelte").Zona} Zona
+   */
+  /** @type {{
+   * entidad: Entidad,
+   * zonas: Zona[],
+   * onGuardar: (entidad: Entidad, fotoData: string | null, quitarFoto: boolean) => Promise<void>,
+   * onCerrar: () => void
+   * }} */
   let {
     entidad,
     zonas = [],
@@ -9,21 +19,17 @@
   } = $props();
 
   let borrador = $state({ ...entidad });
+  /** @type {HTMLInputElement | null} */
   let inputFotoRef = $state(null);
+  /** @type {string | null} */
   let fotoPendiente = $state(null);
   let quitarFoto = $state(false);
   let error = $state("");
   let guardando = $state(false);
 
-  const fuenteFoto = $derived(
-    fotoPendiente ||
-      (borrador.foto_url
-        ? borrador.foto_url.startsWith("data:") || borrador.foto_url.startsWith("http")
-          ? borrador.foto_url
-          : convertFileSrc(borrador.foto_url)
-        : "")
-  );
+  const fuenteFoto = $derived(fotoPendiente || urlDeImagen(borrador.foto_url));
 
+  /** @param {File} archivo */
   function procesarImagen(archivo) {
     return new Promise((resolve, reject) => {
       if (!archivo.type.startsWith("image/")) {
@@ -59,6 +65,7 @@
     });
   }
 
+  /** @param {Event & { currentTarget: HTMLInputElement }} evento */
   async function alSeleccionarFoto(evento) {
     const archivo = evento.currentTarget.files?.[0];
     evento.currentTarget.value = "";
@@ -112,6 +119,7 @@
     }
   }
 
+  /** @param {KeyboardEvent} evento */
   function alTeclear(evento) {
     if (evento.key === "Escape" && !guardando) onCerrar();
   }
@@ -158,9 +166,6 @@
             <span class="sin-foto">{borrador.nombre.slice(0, 2).toUpperCase() || "?"}</span>
           {/if}
           <span class="insignia-camara" aria-hidden="true">+</span>
-        </button>
-        <button class="btn-secundario" type="button" onclick={() => inputFotoRef?.click()}>
-          Cambiar imagen
         </button>
         {#if fuenteFoto}
           <button class="btn-quitar-foto" type="button" onclick={quitarImagen}>Quitar imagen</button>
@@ -216,8 +221,12 @@
           <span>Ficha única <small>No se puede colocar más de una vez a la vez.</small></span>
         </label>
         <label class="opcion">
-          <input type="checkbox" bind:checked={borrador.es_publico} />
-          <span>Ficha pública</span>
+          <input type="checkbox" bind:checked={borrador.vida_es_publica} />
+          <span>Vida pública</span>
+        </label>
+        <label class="opcion">
+          <input type="checkbox" bind:checked={borrador.armadura_es_publica} />
+          <span>Armadura pública</span>
         </label>
       </div>
     </div>

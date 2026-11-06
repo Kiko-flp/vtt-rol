@@ -70,6 +70,10 @@ fn parsear_comando(comando: &str) -> Result<Vec<Tirada>, String> {
                 return Err("Los dados y caras deben ser mayores a 0".into());
             }
 
+            if veces > 999 {
+                return Err("No puedes hacer tiradas de más de 999 de golpe".into());
+            }
+
             let mods_lower = mods_str.to_lowercase();
             let ventaja = mods_lower.contains("adv");
             let desventaja = mods_lower.contains("desv") || mods_lower.contains("dis");
@@ -201,7 +205,7 @@ pub fn tirar_dado(comando: String, state: State<'_, AppState>) -> Result<String,
     registrar_tirada(&state, &resultado);
 
     // 2. Guarda el comando en el historial personal de este cliente directamente en disco
-    registrar_comando_personal(&comando);
+    registrar_comando_personal(&state, &comando);
 
     Ok(resultado)
 }

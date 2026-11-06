@@ -1,29 +1,20 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use tauri::{AppHandle, Manager, State};
+use tauri::State;
 
+use super::estado::{DeltaPartida, EstadoPartida};
 use super::modelos::{Coordenada, Cuerpo, Entidad, Instancia, TipoEntidad};
-use super::partida::{
-    persistir_delta_diferido, procesar_delta, AppState, DeltaPartida, EstadoPartida,
-};
+use super::partida::{procesar_delta, AppState};
 
 #[tauri::command]
 pub fn obtener_banco_entidades(state: State<'_, AppState>) -> Result<Vec<Entidad>, String> {
-    state
-        .0
-        .lock()
-        .map(|partida| partida.banco_entidades.clone())
-        .map_err(|_| "No se pudo acceder al estado de la partida".into())
+    Ok(state.lock().banco_entidades.clone())
 }
 
 #[tauri::command]
 pub fn obtener_instancias_activas(state: State<'_, AppState>) -> Result<Vec<Instancia>, String> {
-    state
-        .0
-        .lock()
-        .map(|partida| partida.instancias_activas.clone())
-        .map_err(|_| "No se pudo acceder al estado de la partida".into())
+    Ok(state.lock().instancias_activas.clone())
 }
 
 #[tauri::command]
@@ -48,11 +39,8 @@ pub fn crear_entidad(
         return Err("Armadura, velocidad y rango no pueden ser negativos".into());
     }
 
-    let (entidad, delta) = {
-        let mut partida = state
-            .0
-            .lock()
-            .map_err(|_| "No se pudo acceder al estado de la partida")?;
+    let entidad = {
+        let mut partida = state.lock();
         if !partida.zonas.iter().any(|zona| zona.id == zona_id) {
             return Err(format!("La zona {zona_id} no existe"));
         }
@@ -75,16 +63,18 @@ pub fn crear_entidad(
             cuerpo: Cuerpo::Pequenio,
             zona_id,
             foto_url: None,
-            es_publico: false,
+            vida_es_publica: false,
+            armadura_es_publica: false,
             archivos_adjuntos: Vec::new(),
             es_unico: false,
         };
         let delta = DeltaPartida::EntidadCreada(entidad.clone());
-        partida.aplicar_delta(&delta);
-        (entidad, delta)
+        partida
+            .registrar(&state.almacen, delta)
+            .map_err(|err| format!("No se pudo guardar la ficha: {err}"))?;
+        entidad
     };
 
-    persistir_delta_diferido(delta);
     Ok(entidad)
 }
 
@@ -93,7 +83,6 @@ pub fn actualizar_entidad(
     mut entidad: Entidad,
     foto_data: Option<String>,
     quitar_foto: bool,
-    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Entidad, String> {
     entidad.nombre = entidad.nombre.trim().to_string();
@@ -110,10 +99,7 @@ pub fn actualizar_entidad(
         return Err("No se puede subir y quitar una imagen en la misma operación".into());
     }
 
-    let mut partida = state
-        .0
-        .lock()
-        .map_err(|_| "No se pudo acceder al estado de la partida")?;
+    let mut partida = state.lock();
     let actual = partida
         .banco_entidades
         .iter()
@@ -148,27 +134,24 @@ pub fn actualizar_entidad(
             return Err("La imagen debe ocupar menos de 3 MB después de procesarla".into());
         }
 
-        let directorio = app
-            .path()
-            .app_data_dir()
-            .map_err(|err| format!("No se pudo localizar la carpeta de datos: {err}"))?
-            .join("fichas");
+        let directorio = state.almacen.dir().join("fichas");
         std::fs::create_dir_all(&directorio)
             .map_err(|err| format!("No se pudo crear la carpeta de imágenes: {err}"))?;
         let marca_tiempo = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|err| format!("No se pudo obtener la hora del sistema: {err}"))?
             .as_nanos();
-        let ruta = directorio.join(format!("ficha-{}-{marca_tiempo}.{extension}", entidad.id));
+        let nombre_archivo = format!("ficha-{}-{marca_tiempo}.{extension}", entidad.id);
+        let ruta = directorio.join(&nombre_archivo);
         std::fs::write(&ruta, bytes)
             .map_err(|err| format!("No se pudo guardar la imagen de la ficha: {err}"))?;
-        entidad.foto_url = Some(ruta.to_string_lossy().into_owned());
+        entidad.foto_url = Some(format!("fichas/{nombre_archivo}"));
     }
 
     let delta = DeltaPartida::EntidadModificada(entidad.clone());
-    partida.aplicar_delta(&delta);
-    drop(partida);
-    persistir_delta_diferido(delta);
+    partida
+        .registrar(&state.almacen, delta)
+        .map_err(|err| format!("No se pudo guardar la ficha: {err}"))?;
     Ok(entidad)
 }
 
@@ -196,11 +179,8 @@ pub fn colocar_entidad(
     state: State<'_, AppState>,
 ) -> Result<Instancia, String> {
     validar_posicion(x, y)?;
-    let (instancia, delta) = {
-        let mut partida = state
-            .0
-            .lock()
-            .map_err(|_| "No se pudo acceder al estado de la partida")?;
+    let instancia = {
+        let mut partida = state.lock();
         if !partida.mapas.iter().any(|mapa| mapa.id == mapa_id) {
             return Err(format!("El mapa {mapa_id} no existe"));
         }
@@ -231,10 +211,11 @@ pub fn colocar_entidad(
             nueva_instancia(&partida, entidad, mapa_id, x, y)?
         };
         let delta = DeltaPartida::InstanciaCreada(instancia.clone());
-        partida.aplicar_delta(&delta);
-        (instancia, delta)
+        partida
+            .registrar(&state.almacen, delta)
+            .map_err(|err| format!("No se pudo colocar la ficha: {err}"))?;
+        instancia
     };
-    persistir_delta_diferido(delta);
     Ok(instancia)
 }
 
@@ -273,10 +254,7 @@ pub fn mover_instancia(
 ) -> Result<(), String> {
     validar_posicion(x, y)?;
     {
-        let partida = state
-            .0
-            .lock()
-            .map_err(|_| "No se pudo acceder al estado de la partida")?;
+        let partida = state.lock();
         if !partida.mapas.iter().any(|mapa| mapa.id == mapa_id) {
             return Err(format!("El mapa {mapa_id} no existe"));
         }
@@ -306,10 +284,7 @@ pub fn modificar_vida(
     state: State<'_, AppState>,
 ) -> Result<Instancia, String> {
     let instancia = {
-        let partida = state
-            .0
-            .lock()
-            .map_err(|_| "No se pudo acceder al estado de la partida")?;
+        let partida = state.lock();
         partida
             .instancias_activas
             .iter()
@@ -333,9 +308,7 @@ pub fn modificar_vida(
 #[tauri::command]
 pub fn retirar_instancia(instancia_id: u16, state: State<'_, AppState>) -> Result<(), String> {
     let existe = state
-        .0
         .lock()
-        .map_err(|_| "No se pudo acceder al estado de la partida")?
         .instancias_activas
         .iter()
         .any(|instancia| instancia.id_instancia == instancia_id && instancia.activo);

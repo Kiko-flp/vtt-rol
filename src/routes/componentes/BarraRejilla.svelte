@@ -1,208 +1,147 @@
 <!-- src/routes/componentes/BarraRejilla.svelte -->
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
+  import { partida, LIMITES_REJILLA } from "$lib/partida.svelte";
 
-  interface Rejilla {
-    visible?: boolean;
-    tamano: number;
-    color: string;
-    grosor: number;
-    opacidad: number;
-  }
-
-  interface Mapa {
-    id: number;
-    id_zona: number;
-    nombre: string;
-    url_imagen_fondo: string | null;
-    ancho: number;
-    alto: number;
-    rejilla: number;
-    rejilla_visible: boolean;
-    color_opacidad: number[];
-    grosor: number;
-    orden: number;
-  }
-
-  let {
-    rejilla = $bindable(),
-    mapaActual = null,
-    onMapaGuardado,
-    onError
-  }: {
-    rejilla: Rejilla;
-    mapaActual?: Pick<Mapa, "id"> | null;
-    onMapaGuardado?: (mapa: Mapa) => void;
-    onError?: (error: unknown) => void;
-  } = $props();
-
-  const TAMANO_MIN = 5;
-  const TAMANO_MAX = 300;
-  const TAMANO_DEFECTO = 40;
+  const { tamanoMin: TAMANO_MIN, tamanoMax: TAMANO_MAX, grosorMin: GROSOR_MIN, grosorMax: GROSOR_MAX } =
+    LIMITES_REJILLA;
+  const GROSOR_PASO = 1;
 
   let barraRef: HTMLDivElement | null = $state(null);
-  let temporizadorGuardado: ReturnType<typeof setTimeout> | null = null;
-  let hayCambiosPendientes = false;
-  let mapaActivoCopia: Pick<Mapa, "id"> | null = null;
 
-  function hexToRgba(hex: string, opacidad: number): number[] {
-    const limpio = hex.replace("#", "");
-    const num = parseInt(limpio.length === 3 ? limpio.split("").map((x) => x + x).join("") : limpio, 16) || 0;
-    const r = (num >> 16) & 255;
-    const g = (num >> 8) & 255;
-    const b = num & 255;
-    const a = Math.round(Math.min(1, Math.max(0, opacidad)) * 255);
-    return [r, g, b, a];
-  }
-
-  // Guardado al cambiar de mapa
-  $effect(() => {
-    const idActual = mapaActual?.id;
-    if (mapaActivoCopia && mapaActivoCopia.id !== idActual) {
-      if (hayCambiosPendientes) {
-        guardarCambios(mapaActivoCopia);
-      }
-    }
-    mapaActivoCopia = mapaActual ? { ...mapaActual } : null;
-  });
-
-  function registrarModificacion() {
-    hayCambiosPendientes = true;
-    if (temporizadorGuardado) clearTimeout(temporizadorGuardado);
-    // Solo espera 5s si el usuario NO hace nada más
-    temporizadorGuardado = setTimeout(() => {
-      guardarCambios(mapaActual);
-    }, 5000);
-  }
-
-  export async function forzarGuardadoInmediato() {
-    if (hayCambiosPendientes) {
-      return await guardarCambios(mapaActual);
-    }
-    return true;
-  }
-
-  async function guardarCambios(mapaRef: Pick<Mapa, "id"> | null | undefined): Promise<boolean> {
-    if (!hayCambiosPendientes || !mapaRef || !mapaRef.id) return true;
-    if (temporizadorGuardado) clearTimeout(temporizadorGuardado);
-    hayCambiosPendientes = false;
-
-    try {
-      const mapaGuardado = await invoke<Mapa>("actualizar_rejilla_mapa", {
-        mapaId: mapaRef.id,
-        rejilla: Math.round(rejilla.tamano),
-        rejillaVisible: rejilla.visible !== false,
-        grosor: Math.round(rejilla.grosor),
-        colorOpacidad: hexToRgba(rejilla.color, rejilla.opacidad)
-      });
-      mapaActivoCopia = mapaGuardado;
-      onMapaGuardado?.(mapaGuardado);
-      return true;
-    } catch (err) {
-      hayCambiosPendientes = true;
-      onError?.(err);
-      return false;
-    }
-  }
-
-  // Guardado inmediato al pulsar en cualquier otra parte de la ventana
+  // Quitar el foco y guardar de inmediato si se pulsa en cualquier otra parte
   onMount(() => {
     function onPointerDownGlobal(e: PointerEvent) {
-      if (barraRef && barraRef.contains(e.target as Node)) {
-        return;
-      }
-      if (hayCambiosPendientes) {
-        guardarCambios(mapaActual);
+      const target = e.target as Node;
+      // Si el clic fue fuera de la barra de herramientas
+      if (barraRef && !barraRef.contains(target)) {
+        // Desenfocar explícitamente cualquier input activo
+        if (document.activeElement instanceof HTMLElement) {
+          document.activeElement.blur();
+        }
+        void partida.guardarRejilla();
       }
     }
 
     window.addEventListener("pointerdown", onPointerDownGlobal);
     return () => {
       window.removeEventListener("pointerdown", onPointerDownGlobal);
-      if (hayCambiosPendientes) guardarCambios(mapaActual);
+      void partida.guardarRejilla();
     };
   });
 
   function normalizarTamano() {
-    const t = Math.round(Number(rejilla.tamano));
-    rejilla.tamano = Number.isFinite(t) && t > 0 ? Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, t)) : TAMANO_DEFECTO;
-    registrarModificacion();
+    const t = Math.round(Number(partida.rejilla.tamano));
+    const fallback = partida.mapaActual?.rejilla || 50;
+    partida.rejilla.tamano = Number.isFinite(t) && t > 0 ? Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, t)) : fallback;
+    partida.marcarRejillaModificada();
   }
 
   function normalizarGrosor() {
-    const g = Number(rejilla.grosor);
-    rejilla.grosor = Number.isFinite(g) && g > 0 ? Math.min(5, Math.max(0.5, g)) : 1;
-    registrarModificacion();
+    const g = Number(partida.rejilla.grosor);
+    const fallback = partida.mapaActual?.grosor ?? 1;
+    partida.rejilla.grosor =
+      Number.isFinite(g) && g >= GROSOR_MIN ? Math.min(GROSOR_MAX, Math.max(GROSOR_MIN, g)) : fallback;
+    partida.marcarRejillaModificada();
+  }
+
+  function alRuedaGrosor(e: WheelEvent) {
+    if (!partida.mapaActual) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1 : -1;
+
+    // Si es 0 u otro número válido, lo respeta en lugar de caer al fallback
+    const actual = Number.isFinite(Number(partida.rejilla.grosor))
+      ? Math.round(Number(partida.rejilla.grosor))
+      : (partida.mapaActual.grosor ?? 1);
+
+    partida.rejilla.grosor = Math.min(GROSOR_MAX, Math.max(GROSOR_MIN, actual + delta));
+    partida.marcarRejillaModificada();
+  }
+
+  // MODIFICACIÓN CON LA RUEDA DEL RATÓN
+  function alRuedaTamano(e: WheelEvent) {
+    if (!partida.mapaActual) return;
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 5 : -5;
+    const actual = Math.round(Number(partida.rejilla.tamano) || partida.mapaActual.rejilla || 50);
+    partida.rejilla.tamano = Math.min(TAMANO_MAX, Math.max(TAMANO_MIN, actual + delta));
+    partida.marcarRejillaModificada();
   }
 </script>
 
-<div class="barra-herramientas" bind:this={barraRef}>
-  <button class="btn-lapiz" title="Modo Dibujo">✏️</button>
+<div class="barra-herramientas" class:desactivada={!partida.mapaActual} bind:this={barraRef}>
+  <button class="btn-lapiz" title="Modo Dibujo" disabled={!partida.mapaActual}>✏️</button>
 
-  <label class="control" title="Mostrar u ocultar la rejilla">
+  <label class="control">
     <input
       type="checkbox"
-      checked={rejilla.visible !== false}
-      onchange={(e) => {
-        rejilla.visible = e.currentTarget.checked;
-        registrarModificacion();
-      }}
+      disabled={!partida.mapaActual}
+      bind:checked={partida.rejilla.visible}
+      onchange={() => partida.marcarRejillaModificada()}
     />
-    <span>Rejilla</span>
+    <span>Visible</span>
   </label>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
-    <label for="rejilla-tamano">Celda:</label>
+  <div class="control" class:apagado={!partida.mapaActual}>
+    <label for="rejilla-tamano">Rejilla:</label>
     <input
       id="rejilla-tamano"
       type="number"
-      bind:value={rejilla.tamano}
-      oninput={registrarModificacion}
+      disabled={!partida.mapaActual}
+      bind:value={partida.rejilla.tamano}
+      oninput={() => partida.marcarRejillaModificada()}
       onchange={normalizarTamano}
+      onwheel={alRuedaTamano}
       min={TAMANO_MIN}
       max={TAMANO_MAX}
       step="5"
+      title="Rueda del ratón para subir/bajar de 5 en 5"
     />
     <span>px</span>
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!partida.mapaActual}>
     <label for="rejilla-color">Color:</label>
     <input
       id="rejilla-color"
       type="color"
-      bind:value={rejilla.color}
-      oninput={registrarModificacion}
+      disabled={!partida.mapaActual}
+      bind:value={partida.rejilla.color}
+      oninput={() => partida.marcarRejillaModificada()}
     />
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!partida.mapaActual}>
     <label for="rejilla-grosor">Grosor:</label>
     <input
       id="rejilla-grosor"
       type="number"
-      bind:value={rejilla.grosor}
-      oninput={registrarModificacion}
+      disabled={!partida.mapaActual}
+      bind:value={partida.rejilla.grosor}
+      oninput={() => partida.marcarRejillaModificada()}
       onchange={normalizarGrosor}
-      min="0.5"
-      max="5"
-      step="0.5"
+      onwheel={alRuedaGrosor}
+      min={GROSOR_MIN}
+      max={GROSOR_MAX}
+      step={GROSOR_PASO}
+      title="Rueda del ratón para subir/bajar de 1 en 1"
     />
   </div>
 
-  <div class="control" class:apagado={rejilla.visible === false}>
+  <div class="control" class:apagado={!partida.mapaActual}>
     <label for="rejilla-opacidad">Opacidad:</label>
     <input
       id="rejilla-opacidad"
       type="range"
+      disabled={!partida.mapaActual}
       min="0"
       max="1"
       step="0.05"
-      bind:value={rejilla.opacidad}
-      oninput={registrarModificacion}
+      bind:value={partida.rejilla.opacidad}
+      oninput={() => partida.marcarRejillaModificada()}
     />
-    <span class="porcentaje">{Math.round(rejilla.opacidad * 100)}%</span>
+    <span class="porcentaje">{Math.round(partida.rejilla.opacidad * 100)}%</span>
   </div>
 </div>
 
@@ -216,6 +155,11 @@
     border-radius: 6px;
     font-size: 13px;
     border: 1px solid #3f3f46;
+    user-select: none;
+  }
+  .barra-herramientas.desactivada {
+    opacity: 0.5;
+    pointer-events: none;
   }
   .control { display: flex; align-items: center; gap: 6px; }
   .control.apagado { opacity: 0.4; }

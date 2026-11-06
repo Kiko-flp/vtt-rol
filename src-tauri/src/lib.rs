@@ -4,28 +4,55 @@ mod tablero_general;
 use std::sync::Mutex;
 use tauri::Manager;
 
+use tablero_general::almacen::Almacen;
 use tablero_general::dados::tirar_dado;
+use tablero_general::estado;
 use tablero_general::ficha::{
     actualizar_entidad, colocar_entidad, crear_entidad, modificar_vida, mover_instancia,
     obtener_banco_entidades, obtener_instancias_activas, retirar_instancia,
 };
+use tablero_general::flecha::{guardar_flecha, obtener_flechas, quitar_flecha};
 use tablero_general::partida::{
-    compactar_partida, iniciar_autoguardado, // <-- Importamos ambas
+    AppState, borrar_mapa, compactar_partida, crear_mapa, crear_zona, eliminar_zona,
+    importar_imagen, iniciar_autoguardado, modificar_mapa, modificar_zona, obtener_dir_datos,
     obtener_historial_personal, obtener_historial_tiradas, obtener_mapas_zona, obtener_zonas,
-    actualizar_imagen_mapa, actualizar_rejilla_mapa, borrar_mapa, crear_mapa, crear_zona,
-    eliminar_zona, renombrar_mapa, renombrar_zona, reordenar_mapa, reordenar_zona,
-    AppState, EstadoPartida,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let estado_inicial = EstadoPartida::cargar();
-
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(AppState(Mutex::new(estado_inicial)))
-        // INICIAMOS EL TEMPORIZADOR DE 10 MINUTOS EN SEGUNDO PLANO
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            // Todo se guarda en el directorio de datos de la app, nunca en el directorio de trabajo.
+            let dir = app.path().app_data_dir()?;
+            let almacen = Almacen::abrir(&dir)?;
+
+            // Solo en desarrollo: trae los archivos que el sistema antiguo dejaba en src-tauri/.
+            #[cfg(debug_assertions)]
+            {
+                if let Ok(cwd) = std::env::current_dir() {
+                    let copiados = almacen.migrar_desde(&cwd);
+                    if !copiados.is_empty() {
+                        eprintln!("[partida] migrados desde {}: {:?}", cwd.display(), copiados);
+                    }
+                }
+            }
+
+            let (estado_inicial, informe) = estado::cargar(&almacen)?;
+            eprintln!("[partida] datos en {} · {:?}", dir.display(), informe);
+
+            // Consolida los deltas pendientes en el snapshot al arrancar (mantiene corto el log).
+            if informe.conviene_compactar() {
+                if let Err(e) = estado::compactar(&almacen, &estado_inicial) {
+                    eprintln!("[partida] {e}");
+                }
+            }
+
+            app.manage(AppState {
+                estado: Mutex::new(estado_inicial),
+                almacen,
+            });
             iniciar_autoguardado(app.handle().clone());
             Ok(())
         })
@@ -49,16 +76,17 @@ pub fn run() {
             mover_instancia,
             modificar_vida,
             retirar_instancia,
+            obtener_flechas,
+            guardar_flecha,
+            quitar_flecha,
             crear_zona,
             eliminar_zona,
-            renombrar_zona,
-            reordenar_zona,
+            modificar_zona,
             crear_mapa,
-            renombrar_mapa,
-            reordenar_mapa,
-            actualizar_imagen_mapa,
-            actualizar_rejilla_mapa,
+            modificar_mapa,
             borrar_mapa,
+            obtener_dir_datos,
+            importar_imagen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

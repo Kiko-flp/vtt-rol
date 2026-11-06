@@ -87,9 +87,10 @@ La aplicacion guarda las imagenes de las fichas en su directorio de datos de
 usuario. El protocolo de archivos de Tauri tiene acceso limitado a
 `$APPDATA/**` para poder mostrarlas sin dar acceso al resto del sistema.
 
-Para validar el backend:
+Para ejecutar las pruebas:
 
 ```bash
+bun run test
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -111,9 +112,9 @@ sudo apt install ./src-tauri/target/release/bundle/deb/NOMBRE_DEL_PAQUETE.deb
 
 ## Integracion continua
 
-El flujo `.github/workflows/ubuntu-26.04.yml` ejecuta las pruebas Rust y genera
-el paquete `.deb` en un runner Ubuntu 26.04 cada vez que se actualiza `main` o
-se abre un pull request hacia esa rama.
+El flujo `.github/workflows/ubuntu-26.04.yml` ejecuta las pruebas de frontend y
+Rust y genera el paquete `.deb` en un runner Ubuntu 26.04 cada vez que se
+actualiza `main` o se abre un pull request hacia esa rama.
 
 ## Desinstalar lo instalado para las pruebas
 

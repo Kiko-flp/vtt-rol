@@ -1,16 +1,42 @@
 <!-- src/routes/componentes/Tablero.svelte -->
 <script>
   import { onMount, untrack, onDestroy } from 'svelte';
-  import { convertFileSrc } from '@tauri-apps/api/core';
+  import { urlDeImagen } from '$lib/imagenes';
+  import { trayectoriaRectaFlecha } from '$lib/flechas';
+  import { distribuirRejilla } from '$lib/rejilla';
+  import FlechasTablero from './FlechasTablero.svelte';
 
+  /**
+   * @typedef {import("$lib/partida.svelte").Mapa} Mapa
+   * @typedef {import("$lib/partida.svelte").Rejilla} Rejilla
+   * @typedef {import("$lib/partida.svelte").Instancia} Instancia
+   * @typedef {import("$lib/partida.svelte").Entidad} Entidad
+   */
+  /** @type {{
+   * mapa: Mapa | null,
+   * rejilla: Rejilla,
+   * instancias?: Instancia[],
+   * instanciaSeleccionada?: Instancia | null,
+   * flechas?: import("$lib/partida.svelte").Flecha[],
+   * onSeleccionarInstancia?: (instancia: Instancia) => void,
+   * onColocarEntidad?: (entidadId: number, x: number, y: number) => void | Promise<void>,
+   * onMoverInstancia?: (instanciaId: number, x: number, y: number) => void | Promise<void>,
+   * onGuardarFlecha?: (instanciaId: number, puntos: import("$lib/partida.svelte").PuntoFlecha[]) => Promise<void>,
+   * onQuitarFlecha?: (instanciaId: number) => Promise<void>,
+   * onEditarEntidad?: (entidad: Entidad) => void,
+   * onRetirarInstancia?: (instancia: Instancia) => void | Promise<void>
+   * }} */
   let {
-    mapa = { ancho: 1000, alto: 1000, url_imagen_fondo: '' },
-    rejilla = { visible: true, tamano: 40, color: '#ffffff', grosor: 1, opacidad: 0.3 },
+    mapa = null,
+    rejilla,
     instancias = [],
     instanciaSeleccionada = null,
+    flechas = [],
     onSeleccionarInstancia,
     onColocarEntidad,
     onMoverInstancia,
+    onGuardarFlecha,
+    onQuitarFlecha,
     onEditarEntidad,
     onRetirarInstancia
   } = $props();
@@ -37,9 +63,13 @@
   // Un <img> del DOM no debe volverse proxy: $state.raw.
   let imagenFondo = $state.raw(null);
   let urlActual = null;
+  /** @type {number | null} */
+  let idActual = null; // id del mapa mostrado
   let tokenCarga = 0;
 
   let panActivo = $state(false);
+  let errorFicha = $state("");
+  let flechaBorrador = $state(null);
   let ultimo = { x: 0, y: 0 };
   /** @type {null | { id: number, x: number, y: number, inicioX: number, inicioY: number, offsetX: number, offsetY: number, movida: boolean, pointerId: number }} */
   let arrastreFicha = $state(null);
@@ -59,13 +89,13 @@
     if (imagenFondo) return { w: imagenFondo.naturalWidth, h: imagenFondo.naturalHeight };
     return { w: mapa?.ancho || 1000, h: mapa?.alto || 1000 };
   }
-
   // ---------------------------------------------------------------------------
   // Carga del fondo: se repite cuando cambia el mapa
   // ---------------------------------------------------------------------------
   $effect(() => {
     const url = mapa?.url_imagen_fondo || '';
-    untrack(() => cargarFondo(url));
+    const id = mapa?.id ?? null;
+    untrack(() => cargarFondo(url, id));
   });
 
   // La memoria solo se destruye al cerrar el tablero, no en cada cambio de mapa
@@ -83,10 +113,18 @@
     }
   }
 
-  function cargarFondo(url) {
-    // Si la URL es la misma Y la imagen ya está en memoria, la reutilizamos (0% CPU, 0 MB extra)
-    if (url === urlActual && imagenFondo) {
-      ajustarVista();
+  /**
+   * @param {string} url
+   * @param {number | null} id
+   */
+  function cargarFondo(url, id) {
+    const cambioDeMapa = id !== idActual;
+    idActual = id;
+
+    // Mismo fondo (ya cargado, o sin imagen): no se recarga nada. La cámara solo se recentra si es
+    // OTRO mapa; si no, guardar la rejilla o renombrar mapas la devolvería al centro cada vez.
+    if (url === urlActual && (imagenFondo || !url)) {
+      if (cambioDeMapa) ajustarVista();
       return;
     }
 
@@ -134,7 +172,7 @@
       ajustarVista();
     };
 
-    img.src = url.startsWith('http') || url.startsWith('data:') ? url : convertFileSrc(url);
+    img.src = urlDeImagen(url); // `url` es la ruta relativa guardada en el mapa
   }
 
   // ---------------------------------------------------------------------------
@@ -179,8 +217,13 @@
     if (contenedor?.hasPointerCapture?.(e.pointerId)) contenedor.releasePointerCapture(e.pointerId);
   }
 
-  function tamanoCelda() {
-    return Math.max(1, Number(rejilla.tamano) || Number(mapa?.rejilla) || 50);
+  function distribucionRejilla() {
+    const { w, h } = dimsMundo();
+    return distribuirRejilla(
+      w,
+      h,
+      Math.max(1, Number(rejilla.tamano) || Number(mapa?.rejilla) || 50)
+    );
   }
 
   function dimensionesFicha(instancia) {
@@ -191,26 +234,20 @@
   }
 
   function limitarCelda(x, y, instancia = null) {
-    const celda = tamanoCelda();
-    const { w, h } = dimsMundo();
+    const distribucion = distribucionRejilla();
     const { columnas, filas } = instancia ? dimensionesFicha(instancia) : { columnas: 1, filas: 1 };
-    const maxX = Math.min(32767, Math.max(0, Math.floor((w - columnas * celda) / celda)));
-    const maxY = Math.min(32767, Math.max(0, Math.floor((h - filas * celda) / celda)));
     return {
-      x: clamp(Math.floor(x), 0, maxX),
-      y: clamp(Math.floor(y), 0, maxY)
+      x: clamp(Math.floor(x), 0, Math.max(0, distribucion.columnas - columnas)),
+      y: clamp(Math.floor(y), 0, Math.max(0, distribucion.filas - filas))
     };
   }
 
   function limitarPosicion(x, y, instancia) {
-    const celda = tamanoCelda();
-    const { w, h } = dimsMundo();
+    const distribucion = distribucionRejilla();
     const { columnas, filas } = dimensionesFicha(instancia);
-    const maxX = Math.min(32767, Math.max(0, Math.floor((w - columnas * celda) / celda)));
-    const maxY = Math.min(32767, Math.max(0, Math.floor((h - filas * celda) / celda)));
     return {
-      x: clamp(Math.round(x), 0, maxX),
-      y: clamp(Math.round(y), 0, maxY)
+      x: clamp(Math.round(x), 0, Math.max(0, distribucion.columnas - columnas)),
+      y: clamp(Math.round(y), 0, Math.max(0, distribucion.filas - filas))
     };
   }
 
@@ -223,16 +260,7 @@
   }
 
   function fuenteImagen(url) {
-    if (!url) return "";
-    return url.startsWith("data:") || url.startsWith("http") ? url : convertFileSrc(url);
-  }
-
-  function abrirMenuFicha(evento, instancia) {
-    evento.preventDefault();
-    evento.stopPropagation();
-    arrastreFicha = null;
-    onSeleccionarInstancia?.(instancia);
-    menuFicha = { x: evento.clientX, y: evento.clientY, instancia };
+    return urlDeImagen(url);
   }
 
   function editarFichaDesdeMenu() {
@@ -252,22 +280,27 @@
   /**
    * @param {{ entidadId: number, clientX: number, clientY: number }} detalle
    */
-  function colocarEntidadEnPuntero({ entidadId, clientX, clientY }) {
+  async function colocarEntidadEnPuntero({ entidadId, clientX, clientY }) {
     if (!Number.isInteger(entidadId) || entidadId <= 0) return;
     if (!mapa?.id) {
-      onColocarEntidad?.(entidadId, 0, 0);
+      errorFicha = "Selecciona un mapa antes de colocar una ficha.";
       return;
     }
 
     const punto = coordenadaDesdePantalla(clientX, clientY);
-    const celda = tamanoCelda();
-    const posicion = limitarCelda(punto.x / celda, punto.y / celda);
-    onColocarEntidad?.(entidadId, posicion.x, posicion.y);
+    const distribucion = distribucionRejilla();
+    const posicion = limitarCelda(punto.x / distribucion.anchoCelda, punto.y / distribucion.altoCelda);
+    try {
+      errorFicha = "";
+      await onColocarEntidad?.(entidadId, posicion.x, posicion.y);
+    } catch (error) {
+      errorFicha = error instanceof Error ? error.message : String(error);
+    }
   }
 
   /** @param {CustomEvent<{ entidadId: number, clientX: number, clientY: number }>} evento */
-  function alRecibirColocacionEntidad(evento) {
-    colocarEntidadEnPuntero(evento.detail);
+  async function alRecibirColocacionEntidad(evento) {
+    await colocarEntidadEnPuntero(evento.detail);
   }
 
   /**
@@ -275,6 +308,10 @@
    * @param {{ id_instancia: number, coordenadas: { Localizacion: number[] }, base: { cuerpo?: { Grande?: number[] } } }} instancia
    */
   function iniciarArrastreFicha(e, instancia) {
+    if (e.button === 2) {
+      iniciarApuntarFicha(e, instancia);
+      return;
+    }
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -284,7 +321,7 @@
     const inicioY = e.clientY;
     const coordenadas = instancia.coordenadas.Localizacion;
     const punto = coordenadaDesdePantalla(inicioX, inicioY);
-    const celda = tamanoCelda();
+    const distribucion = distribucionRejilla();
     const x = Math.round(Number(coordenadas[0]) || 0);
     const y = Math.round(Number(coordenadas[1]) || 0);
     const arrastreInicial = {
@@ -293,8 +330,8 @@
       y,
       inicioX,
       inicioY,
-      offsetX: punto.x - x * celda,
-      offsetY: punto.y - y * celda,
+      offsetX: punto.x - x * distribucion.anchoCelda,
+      offsetY: punto.y - y * distribucion.altoCelda,
       movida: false,
       pointerId: e.pointerId
     };
@@ -327,7 +364,12 @@
       if (evento.pointerId !== arrastreInicial.pointerId) return;
       quitarEscuchas();
       arrastreFicha = null;
-      if (!arrastreInicial.movida) return;
+      if (!arrastreInicial.movida) {
+        if (flechas.some((flecha) => flecha.id_instancia === arrastreInicial.id)) {
+          await quitarFlechaDeFicha(arrastreInicial.id);
+        }
+        return;
+      }
 
       const ficha = fichasEnMapa.find((actual) => actual.id_instancia === arrastreInicial.id);
       if (!ficha) return;
@@ -337,7 +379,12 @@
         posicionLibre.y,
         ficha
       );
-      await onMoverInstancia?.(arrastreInicial.id, posicionFinal.x, posicionFinal.y);
+      try {
+        errorFicha = "";
+        await onMoverInstancia?.(arrastreInicial.id, posicionFinal.x, posicionFinal.y);
+      } catch (error) {
+        errorFicha = error instanceof Error ? error.message : String(error);
+      }
     }
 
     /** @param {PointerEvent} evento */
@@ -352,6 +399,98 @@
     window.addEventListener("pointercancel", alCancelarFicha);
   }
 
+  async function quitarFlechaDeFicha(instanciaId) {
+    try {
+      errorFicha = "";
+      await onQuitarFlecha?.(instanciaId);
+    } catch (error) {
+      errorFicha = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  function iniciarApuntarFicha(evento, instancia) {
+    evento.preventDefault();
+    evento.stopPropagation();
+    onSeleccionarInstancia?.(instancia);
+
+    const inicioX = evento.clientX;
+    const inicioY = evento.clientY;
+    const [origenX = 0, origenY = 0] = instancia.coordenadas.Localizacion;
+    const dimensiones = dimensionesFicha(instancia);
+    const origen = {
+      x: origenX + dimensiones.columnas / 2,
+      y: origenY + dimensiones.filas / 2
+    };
+    let puntos = [origen, origen];
+    let movida = false;
+
+    function quitarEscuchas() {
+      window.removeEventListener("pointermove", alMoverFlecha);
+      window.removeEventListener("pointerup", alSoltarFlecha);
+      window.removeEventListener("pointercancel", alCancelarFlecha);
+    }
+
+    function alMoverFlecha(movimiento) {
+      if (movimiento.pointerId !== evento.pointerId) return;
+      if (!movida && Math.hypot(movimiento.clientX - inicioX, movimiento.clientY - inicioY) < 4) return;
+      movida = true;
+
+      puntos = trayectoriaRectaFlecha(
+        origen,
+        movimiento.clientX,
+        movimiento.clientY,
+        contenedor.getBoundingClientRect(),
+        cam,
+        distribucionRejilla(),
+        dimensiones
+      );
+      flechaBorrador = { id_instancia: instancia.id_instancia, puntos: [...puntos] };
+    }
+
+    async function alSoltarFlecha(suelta) {
+      if (suelta.pointerId !== evento.pointerId) return;
+      suelta.preventDefault();
+      quitarEscuchas();
+      if (!movida) {
+        menuFicha = { x: suelta.clientX, y: suelta.clientY, instancia };
+        return;
+      }
+
+      puntos = trayectoriaRectaFlecha(
+        origen,
+        suelta.clientX,
+        suelta.clientY,
+        contenedor.getBoundingClientRect(),
+        cam,
+        distribucionRejilla(),
+        dimensiones
+      );
+      if (puntos[0].x === puntos[1].x && puntos[0].y === puntos[1].y) {
+        flechaBorrador = null;
+        return;
+      }
+      flechaBorrador = { id_instancia: instancia.id_instancia, puntos: [...puntos] };
+      try {
+        errorFicha = "";
+        await onGuardarFlecha?.(instancia.id_instancia, puntos);
+      } catch (error) {
+        errorFicha = error instanceof Error ? error.message : String(error);
+      } finally {
+        flechaBorrador = null;
+      }
+    }
+
+    function alCancelarFlecha(cancelar) {
+      if (cancelar.pointerId !== evento.pointerId) return;
+      quitarEscuchas();
+      flechaBorrador = null;
+    }
+
+    window.addEventListener("pointermove", alMoverFlecha);
+    window.addEventListener("pointerup", alSoltarFlecha);
+    window.addEventListener("pointercancel", alCancelarFlecha);
+  }
+
   /**
    * @param {PointerEvent} e
    * @param {{ offsetX: number, offsetY: number }} arrastre
@@ -359,10 +498,10 @@
    */
   function posicionDesdeArrastre(e, arrastre, instancia) {
     const punto = coordenadaDesdePantalla(e.clientX, e.clientY);
-    const celda = tamanoCelda();
+    const distribucion = distribucionRejilla();
     return limitarPosicion(
-      Math.floor((punto.x - arrastre.offsetX) / celda),
-      Math.floor((punto.y - arrastre.offsetY) / celda),
+      Math.floor((punto.x - arrastre.offsetX) / distribucion.anchoCelda),
+      Math.floor((punto.y - arrastre.offsetY) / distribucion.altoCelda),
       instancia
     );
   }
@@ -370,13 +509,13 @@
   function posicionFicha(instancia) {
     const [x = 0, y = 0] = instancia.coordenadas.Localizacion;
     const posicion = arrastreFicha?.id === instancia.id_instancia ? arrastreFicha : { x, y };
-    const celda = tamanoCelda();
+    const distribucion = distribucionRejilla();
     const { columnas, filas } = dimensionesFicha(instancia);
     return {
-      left: cam.x + Math.round(posicion.x) * celda * cam.zoom,
-      top: cam.y + Math.round(posicion.y) * celda * cam.zoom,
-      width: columnas * celda * cam.zoom,
-      height: filas * celda * cam.zoom
+      left: cam.x + Math.round(posicion.x) * distribucion.anchoCelda * cam.zoom,
+      top: cam.y + Math.round(posicion.y) * distribucion.altoCelda * cam.zoom,
+      width: columnas * distribucion.anchoCelda * cam.zoom,
+      height: filas * distribucion.altoCelda * cam.zoom
     };
   }
 
@@ -408,7 +547,8 @@
         tamano: rejilla.tamano,
         color: rejilla.color,
         grosor: rejilla.grosor,
-        opacidad: rejilla.opacidad
+        opacidad: rejilla.opacidad,
+        dpr
       }
     };
     programar();
@@ -466,15 +606,24 @@
   function dibujarRejilla(ctx, cam, mundoW, mundoH, vistaW, vistaH, estilo) {
     if (!estilo || estilo.visible === false) return;
 
-    const t = Number(estilo.tamano);
-    if (!(t > 0)) return; // vacío o inválido mientras el usuario escribe: no hacemos nada
-    const paso = t * cam.zoom; // tamaño de celda en pantalla
-    if (paso < PASO_MIN_PX) return;
+    // Si el grosor es 0 o menor, no dibuja la rejilla
+    const grosor = Number(estilo.grosor);
+    if (!(grosor > 0)) return;
 
-    const grosor = Math.max(0.1, Number(estilo.grosor) || 1);
     const opacidad = clamp(Number(estilo.opacidad) || 0, 0, 1);
+    if (opacidad <= 0) return;
 
-    // Rectángulo del mapa en pantalla, recortado a lo que se ve.
+    const distribucion = distribuirRejilla(mundoW, mundoH, Number(estilo.tamano));
+    const pasoX = distribucion.anchoCelda * cam.zoom;
+    const pasoY = distribucion.altoCelda * cam.zoom;
+    if (
+      distribucion.columnas <= 0 ||
+      distribucion.filas <= 0 ||
+      pasoX < PASO_MIN_PX ||
+      pasoY < PASO_MIN_PX
+    ) return;
+
+    // Ajusta la separación de las líneas para que la rejilla cierre en el borde del mapa.
     const izq = cam.x;
     const arriba = cam.y;
     const x0 = Math.max(izq, 0);
@@ -484,27 +633,31 @@
     if (x0 >= x1 || y0 >= y1) return;
 
     // Con grosor impar, la línea va al centro del píxel para que no salga borrosa.
-    const medio = Math.round(grosor) % 2 === 1 ? 0.5 : 0;
+    const densidad = Number(estilo.dpr) || 1;
+    const medio = Math.round(grosor * densidad) % 2 === 1 ? 0.5 / densidad : 0;
 
     ctx.save();
+    ctx.beginPath();
+    ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    ctx.clip();
     ctx.strokeStyle = estilo.color;
     ctx.lineWidth = grosor;
     ctx.globalAlpha = opacidad;
     ctx.beginPath();
 
     // Índices de la primera y la última línea visibles en cada eje.
-    const iMin = Math.ceil((x0 - izq) / paso);
-    const iMax = Math.floor((x1 - izq) / paso);
+    const iMin = Math.max(0, Math.ceil((x0 - izq) / pasoX));
+    const iMax = Math.min(distribucion.columnas, Math.floor((x1 - izq) / pasoX));
     for (let i = iMin; i <= iMax; i++) {
-      const x = Math.round(izq + i * paso) + medio;
+      const x = izq + i * pasoX + medio;
       ctx.moveTo(x, y0);
       ctx.lineTo(x, y1);
     }
 
-    const jMin = Math.ceil((y0 - arriba) / paso);
-    const jMax = Math.floor((y1 - arriba) / paso);
+    const jMin = Math.max(0, Math.ceil((y0 - arriba) / pasoY));
+    const jMax = Math.min(distribucion.filas, Math.floor((y1 - arriba) / pasoY));
     for (let j = jMin; j <= jMax; j++) {
-      const y = Math.round(arriba + j * paso) + medio;
+      const y = arriba + j * pasoY + medio;
       ctx.moveTo(x0, y);
       ctx.lineTo(x1, y);
     }
@@ -548,6 +701,9 @@
   onpointercancel={alSoltar}
   ondblclick={() => ajustarVista()}
 >
+  {#if errorFicha}
+    <div class="error-ficha" role="alert">{errorFicha}</div>
+  {/if}
   <canvas bind:this={canvasFondo}></canvas>
   <canvas bind:this={canvasRejilla}></canvas>
   {#each fichasEnMapa as instancia (instancia.id_instancia)}
@@ -564,7 +720,10 @@
       style:width="{posicion.width}px"
       style:height="{posicion.height}px"
       onpointerdown={(e) => iniciarArrastreFicha(e, instancia)}
-      oncontextmenu={(e) => abrirMenuFicha(e, instancia)}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
       ondblclick={(e) => {
         e.stopPropagation();
         onEditarEntidad?.(instancia.base);
@@ -580,6 +739,13 @@
       <small>{instancia.vida_actual}</small>
     </button>
   {/each}
+  <FlechasTablero
+    {flechas}
+    borrador={flechaBorrador}
+    instancias={fichasEnMapa}
+    distribucion={distribucionRejilla()}
+    {cam}
+  />
   {#if menuFicha}
     <div
       class="menu-ficha"
@@ -607,6 +773,19 @@
     background-color: #121212;
     cursor: grab;
     touch-action: none;
+  }
+  .error-ficha {
+    position: absolute;
+    z-index: 20;
+    top: 8px;
+    left: 8px;
+    max-width: min(360px, calc(100% - 32px));
+    padding: 8px 10px;
+    border: 1px solid #ef4444;
+    border-radius: 5px;
+    color: #fee2e2;
+    background: #7f1d1d;
+    pointer-events: none;
   }
   .tablero.arrastrando {
     cursor: grabbing;

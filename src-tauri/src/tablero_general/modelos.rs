@@ -20,34 +20,51 @@ pub enum Coordenada {
     NoPuesto,
 }
 
+// Representa la definición de una entidad
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Entidad {
     pub id: u16,
     pub nombre: String,
     pub tipo: TipoEntidad,
     pub vida_max: i16,
+    #[serde(default)]
+    pub vida_es_publica: bool,
     pub armadura: i16,
+    #[serde(default)]
+    pub armadura_es_publica: bool,
     pub velocidad: i16,
     pub rango_arma: i16,
     pub cuerpo: Cuerpo,
     pub zona_id: u16,
+
+    // Una criatura o NPC puede no tener foto (en JS llegará como string o null)
     #[serde(default)]
     pub foto_url: Option<String>,
-    #[serde(default)]
-    pub es_publico: bool,
+
+    /* Concepto incorrecto debido a que prefiero que sea modular lo que es publico y que no
+    * Además, una ficha (excepto si es jugador) como concepto es público si tiene una instancia
+    *#[serde(default)]
+    *pub es_publico: bool,
+    */
+    // Si falta en el JSON, se asume lista vacía []
     #[serde(default)]
     pub archivos_adjuntos: Vec<Option<String>>,
+
     #[serde(default)]
     pub es_unico: bool,
 }
 
+// Representa una instancia de una entidad en el mapa
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Instancia {
     pub id_instancia: u16,
     pub id_mapa: Option<u16>,
     pub base: Entidad,
+
+    //Si la base tiene que la vida no es pública no se comparte este parámetro
     pub vida_actual: i16,
     pub coordenadas: Coordenada,
+
     #[serde(default)]
     pub activo: bool,
 }
@@ -92,7 +109,7 @@ fn rejilla_visible_por_defecto() -> bool {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Tiradas {
-    pub total: i16,
+    pub total: i32,
     pub comando: String,
     pub hora: String,
 }
