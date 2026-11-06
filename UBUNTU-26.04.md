@@ -27,6 +27,7 @@ sudo apt install --yes \
   libssl-dev \
   libwebkit2gtk-4.1-dev \
   libxdo-dev \
+  pkg-config \
   wget
 ```
 
@@ -64,6 +65,28 @@ bun run tauri dev
 El comando de desarrollo compila el frontend y el backend y abre la ventana de
 la aplicacion.
 
+Si ejecutas el proyecto desde la terminal integrada de VS Code instalado como
+Snap y GTK muestra un error de esquema de GNOME, inicia la aplicacion con un
+entorno limpio para no heredar las variables de Snap:
+
+```bash
+env -i \
+  HOME="$HOME" \
+  USER="$USER" \
+  LOGNAME="$LOGNAME" \
+  PATH="$HOME/.bun/bin:$HOME/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  DISPLAY="${DISPLAY:-}" \
+  WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+  DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-}" \
+  XDG_DATA_DIRS="${XDG_DATA_DIRS_VSCODE_SNAP_ORIG:-/usr/share/ubuntu:/usr/share/gnome:/usr/local/share:/usr/share:/var/lib/snapd/desktop}" \
+  bun run tauri dev
+```
+
+La aplicacion guarda las imagenes de las fichas en su directorio de datos de
+usuario. El protocolo de archivos de Tauri tiene acceso limitado a
+`$APPDATA/**` para poder mostrarlas sin dar acceso al resto del sistema.
+
 Para validar el backend:
 
 ```bash
@@ -91,3 +114,46 @@ sudo apt install ./src-tauri/target/release/bundle/deb/NOMBRE_DEL_PAQUETE.deb
 El flujo `.github/workflows/ubuntu-26.04.yml` ejecuta las pruebas Rust y genera
 el paquete `.deb` en un runner Ubuntu 26.04 cada vez que se actualiza `main` o
 se abre un pull request hacia esa rama.
+
+## Desinstalar lo instalado para las pruebas
+
+Desde la raiz del repositorio, elimina los artefactos generados durante las
+pruebas:
+
+```bash
+rm -rf node_modules build src-tauri/target
+```
+
+Si instalaste el paquete `.deb`, desinstala la aplicacion:
+
+```bash
+sudo apt remove vtt-rol
+```
+
+Si las dependencias de desarrollo se instalaron exclusivamente para este
+proyecto y no las usan otras aplicaciones, puedes quitarlas y limpiar
+dependencias que hayan quedado sin uso:
+
+```bash
+sudo apt remove --purge \
+  libayatana-appindicator3-dev \
+  librsvg2-dev \
+  libssl-dev \
+  libwebkit2gtk-4.1-dev \
+  libxdo-dev
+sudo apt autoremove --purge
+```
+
+Revisa los paquetes que `apt` propone antes de confirmar. No se incluyen
+`build-essential`, `curl`, `file`, `pkg-config` ni `wget`, porque son
+herramientas de uso general y pueden ser necesarias para otros proyectos.
+
+Si instalaste Bun o Rust exclusivamente para estas pruebas, desinstala Bun
+quitando `~/.bun` y las entradas de `PATH` que su instalador agrego a tu
+configuracion de shell. Desinstala Rust con:
+
+```bash
+rustup self uninstall
+```
+
+No ejecutes estos pasos si Bun o Rust ya se utilizaban para otros proyectos.
