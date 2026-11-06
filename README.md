@@ -21,6 +21,6 @@ El tablero, como he explicado anteriormente, tiene una rejilla, donde la idea qu
 
 En la primera etapa del proyecto (la actual) la idea es que el rolmaster lo haga todo, tipo mueva fichas de los jugadores, tire los dados, etc. No es lo ideal y encima tendría que transmitir la pantalla por un tercero como discord para que pueda funcionar, complicando que al jugador no le llegue información específica.
 
-La segunda etapa arregla lo anterior, ya que la idea es la implementación de funciones de red, donde reciba y envíe paquetes (intentaré que sea peer to peer para no depender de servidores) y se sincronice toda la información en la pantalla. Esto permite que solo envíes lo que te interese garantizando la privatización de información.
+La segunda etapa arregla lo anterior, ya que la idea es la implementación de funciones de red, donde reciba y envíe paquetes (intentaré que sea híbrido, con servidores gratuitos para la conexión inicial y peer to peer para el resto) y se sincronice toda la información en la pantalla. Esto permite que solo envíes lo que te interese garantizando la privatización de información.
 
 En una tercera etapa muy lejana se pensarán cosas como "Dungeon creator", muros que tapen visibilidad, pero no tengo claro que termine de encargar con la visión del programa, ya se verá.
