@@ -18,7 +18,10 @@ function crearBackend() {
     ],
     mapas: [mapa(1, 1, 0), mapa(2, 1, 1), mapa(3, 2, 0), mapa(4, 3, 0)],
     banco: [{ id: 1, nombre: "Orco", zona_id: 1 }, { id: 2, nombre: "Lobo", zona_id: 2 }],
-    instancias: [{ id_instancia: 1, id_mapa: 1 }, { id_instancia: 2, id_mapa: 3 }],
+    instancias: [
+      { id_instancia: 1, id_mapa: 1, vida_actual: 10, base: { nombre: "Orco", tipo: "Enemigo", vida_max: 18 } },
+      { id_instancia: 2, id_mapa: 3, vida_actual: 5, base: { nombre: "Lobo", tipo: "Enemigo", vida_max: 9 } }
+    ],
     llamadas: [] as { cmd: string; args: Args }[],
     invoke: async (cmd: string, args: Args = {}): Promise<any> => {
       b.llamadas.push({ cmd, args: clon(args) });
@@ -238,5 +241,32 @@ describe("mapas y reordenación", () => {
     backend.llamadas.length = 0;
     await partida.reordenarZonas([3, 1, 2]); // sin cambios
     expect(llamadas("modificar_zona")).toHaveLength(0);
+  });
+});
+
+describe("fichas: selección y vida", () => {
+  it("seleccionar una ficha la expone como instanciaSeleccionada", async () => {
+    const partida = await nuevoStore();
+    partida.seleccionarInstancia(partida.instancias[1]);
+    expect(partida.idInstanciaSeleccionada).toBe(2);
+    expect(partida.instanciaSeleccionada?.base.nombre).toBe("Lobo");
+    partida.seleccionarInstancia(null);
+    expect(partida.instanciaSeleccionada).toBeNull();
+  });
+
+  it("si Rust elimina la ficha seleccionada (al borrar su zona), la selección desaparece sola", async () => {
+    const partida = await nuevoStore();
+    partida.seleccionarInstancia(partida.instancias[0]); // ficha del mapa 1, zona 1
+    await partida.borrarZona(partida.zonas.find((z) => z.id === 1)!);
+    expect(partida.instanciaSeleccionada).toBeNull();
+  });
+
+  it("modificarVida (placeholder) cambia la vida de la ficha y se refleja en la seleccionada", async () => {
+    const partida = await nuevoStore();
+    partida.seleccionarInstancia(partida.instancias[0]);
+    partida.modificarVida(1, -3);
+    expect(partida.instanciaSeleccionada?.vida_actual).toBe(7);
+    partida.modificarVida(99, 5); // id inexistente: no hace nada ni falla
+    expect(partida.instancias.map((i) => i.vida_actual)).toEqual([7, 5]);
   });
 });

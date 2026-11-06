@@ -44,7 +44,7 @@ pub fn procesar_delta(state: &AppState, delta: DeltaPartida) {
 // Función específica para registrar tiradas (llamada por dados.rs)
 pub fn registrar_tirada(state: &AppState, resultado: &str) {
     let (desglose, total_num) = if let Some((izq, der)) = resultado.split_once(" = ") {
-        (izq.to_string(), der.trim().parse::<i16>().unwrap_or(0))
+        (izq.to_string(), der.trim().parse::<i32>().unwrap_or(0))
     } else {
         (resultado.to_string(), 0)
     };

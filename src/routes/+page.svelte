@@ -1,8 +1,8 @@
 <!-- src/routes/+page.svelte -->
-<script>
+<script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { partida } from "$lib/partida.svelte";
+  import { tiradas } from "$lib/tiradas.svelte";
 
   import PanelIzquierdo from "./componentes/PanelIzquierdo.svelte";
   import PanelDerecho from "./componentes/PanelDerecho.svelte";
@@ -11,122 +11,16 @@
   import BarraDados from "./componentes/BarraDados.svelte";
   import ModalFicha from "./componentes/ModalFicha.svelte";
 
-  let historialTiradas = $state([]);
-
-  // Solo se guarda el id: así la ficha seleccionada se actualiza sola cuando se recargan las
-  // instancias, y desaparece si Rust la elimina (p. ej. al borrar su zona).
-  let idInstanciaSeleccionada = $state(null);
-  let instanciaSeleccionada = $derived(
-    partida.instancias.find((i) => i.id_instancia === idInstanciaSeleccionada) ?? null
-  );
-  let fichaParaEditar = $state(null);
-
-  let comandoChat = $state("");
-  let panelDerechoRef;
+  let fichaParaEditar = $state<any>(null); // por ahora nadie abre el modal; se tipará con Entidad/Instancia
 
   onMount(async () => {
     try {
       await partida.iniciar();
-      historialTiradas = await invoke("obtener_historial_tiradas");
+      await tiradas.cargar();
     } catch (err) {
       console.error("Error al obtener datos de Rust:", err);
     }
   });
-
-  function actualizarDadoEnChat(fragmento, esSuma) {
-    const matchFrag = fragmento.match(/^(\d*)d(\d+)([!a-z]*)$/i);
-    if (!matchFrag) return;
-
-    const delta = (matchFrag[1] ? parseInt(matchFrag[1]) : 1) * (esSuma ? 1 : -1);
-    const caras = matchFrag[2];
-    const sufijos = matchFrag[3] || "";
-
-    const sufijosEscapados = sufijos.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`(^|[+-])\\s*(\\d*)d${caras}${sufijosEscapados}(?=\\s|[+-]|$)`, "i");
-    const match = comandoChat.match(regex);
-
-    if (match) {
-      const signoActual = match[1] === "-" ? -1 : 1;
-      const vecesActuales = (match[2] ? parseInt(match[2]) : 1) * signoActual;
-      const nuevaCantidad = vecesActuales + delta;
-
-      if (nuevaCantidad === 0) {
-        comandoChat = comandoChat.replace(regex, "");
-      } else if (nuevaCantidad > 0) {
-        const prefijo = match.index === 0 ? "" : "+ ";
-        comandoChat = comandoChat.replace(regex, `${prefijo}${nuevaCantidad}d${caras}${sufijos}`);
-      } else {
-        const prefijo = "- ";
-        comandoChat = comandoChat.replace(regex, `${prefijo}${Math.abs(nuevaCantidad)}d${caras}${sufijos}`);
-      }
-
-      comandoChat = comandoChat
-        .replace(/^\s*\+\s*/, "")
-        .replace(/\s*[+-]\s*$/, "")
-        .replace(/\s*\+\s*\+/g, " + ")
-        .replace(/\s*\+\s*-\s*/g, " - ")
-        .trim();
-    } else {
-      if (esSuma) {
-        const texto = `${matchFrag[1] || 1}d${caras}${sufijos}`;
-        comandoChat = comandoChat.trim() ? `${comandoChat.trim()} + ${texto}` : texto;
-      } else {
-        const texto = `- ${matchFrag[1] || 1}d${caras}${sufijos}`;
-        comandoChat = comandoChat.trim() ? `${comandoChat.trim()} ${texto}` : texto;
-      }
-    }
-
-    panelDerechoRef?.enfocarChat();
-  }
-
-  function sumarAlChat(fragmento) {
-    actualizarDadoEnChat(fragmento, true);
-  }
-
-  function restarDelChat(fragmento) {
-    actualizarDadoEnChat(fragmento, false);
-  }
-
-  function ejecutarTiradaDesdeBoton(bonif) {
-    if (!comandoChat.trim()) return;
-    let final = comandoChat;
-    if (bonif !== 0) {
-      final += bonif > 0 ? ` + ${bonif}` : ` - ${Math.abs(bonif)}`;
-    }
-    procesarTirada(final);
-    comandoChat = "";
-  }
-
-  async function procesarTirada(cmd) {
-    if (!cmd || !cmd.trim()) return;
-    try {
-      const res = await invoke("tirar_dado", { comando: cmd.trim() });
-      const [desglose, total] = res.split(" = ");
-      const ahora = new Date();
-      const horaStr = ahora.toTimeString().slice(0, 5);
-
-      historialTiradas.unshift({
-        hora: horaStr,
-        comando: desglose,
-        total: total
-      });
-
-      if (historialTiradas.length > 20) {
-        historialTiradas.pop();
-      }
-      comandoChat = "";
-    } catch {
-      historialTiradas.unshift({
-        hora: new Date().toTimeString().slice(0, 5),
-        comando: "tirada no válida",
-        total: ""
-      });
-    }
-  }
-
-  function modificarVida(inst, delta) {
-    inst.vida_actual += delta;
-  }
 </script>
 
 <div class="contenedor-principal">
@@ -143,23 +37,14 @@
 
     <div class="barra-inferior">
       <BarraDados
-        onSumarAlChat={sumarAlChat}
-        onRestarDelChat={restarDelChat}
-        onLanzarTirada={ejecutarTiradaDesdeBoton}
+        onSumarAlChat={(fragmento: string) => tiradas.sumarDado(fragmento)}
+        onRestarDelChat={(fragmento: string) => tiradas.restarDado(fragmento)}
+        onLanzarTirada={(bonificador: number | null) => tiradas.tirarConBonificador(bonificador)}
       />
     </div>
   </main>
 
-  <PanelDerecho
-    bind:this={panelDerechoRef}
-    instancias={partida.instancias}
-    tiradas={historialTiradas}
-    {instanciaSeleccionada}
-    bind:comandoChat
-    onSeleccionarInstancia={(i) => (idInstanciaSeleccionada = i?.id_instancia ?? null)}
-    onModificarVida={modificarVida}
-    onEnviarTirada={procesarTirada}
-  />
+  <PanelDerecho />
 
   {#if fichaParaEditar}
     <ModalFicha

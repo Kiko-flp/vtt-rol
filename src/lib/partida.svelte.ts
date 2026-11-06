@@ -28,6 +28,34 @@ export interface Mapa {
   orden: number;
 }
 
+export type TipoEntidad = "Enemigo" | "NPC" | "Jugador";
+export type Cuerpo = "Pequenio" | { Grande: number[] };
+
+export interface Entidad {
+  id: number;
+  nombre: string;
+  tipo: TipoEntidad;
+  vida_max: number;
+  armadura: number;
+  velocidad: number;
+  rango_arma: number;
+  cuerpo: Cuerpo;
+  zona_id: number;
+  foto_url?: string | null;
+  es_publico?: boolean;
+  archivos_adjuntos?: (string | null)[];
+  es_unico?: boolean;
+}
+
+export interface Instancia {
+  id_instancia: number;
+  id_mapa: number | null;
+  base: Entidad;
+  vida_actual: number;
+  coordenadas: "NoPuesto" | { Localizacion: number[] };
+  activo?: boolean;
+}
+
 export interface Rejilla {
   visible: boolean;
   tamano: number;
@@ -65,8 +93,15 @@ class Partida {
   zonas = $state<Zona[]>([]);
   /** Mapas de la zona seleccionada. */
   mapas = $state<Mapa[]>([]);
-  banco = $state<any[]>([]);
-  instancias = $state<any[]>([]);
+  banco = $state<Entidad[]>([]);
+  instancias = $state<Instancia[]>([]);
+
+  /** Solo se guarda el id: la ficha seleccionada se actualiza sola al recargar las instancias,
+   *  y desaparece si Rust la elimina (p. ej. al borrar su zona). */
+  idInstanciaSeleccionada = $state<number | null>(null);
+  instanciaSeleccionada = $derived(
+    this.instancias.find((i) => i.id_instancia === this.idInstanciaSeleccionada) ?? null
+  );
 
   /** `null` = no hay ninguna zona (todavía no se ha creado, o se borró la última). */
   zonaId = $state<number | null>(null);
@@ -115,8 +150,8 @@ class Partida {
   /** Rust también cambia el banco y las instancias al borrar zonas o mapas: se vuelven a leer. */
   async recargarEntidades() {
     const [banco, instancias] = await Promise.all([
-      invoke<any[]>("obtener_banco_entidades"),
-      invoke<any[]>("obtener_instancias_activas")
+      invoke<Entidad[]>("obtener_banco_entidades"),
+      invoke<Instancia[]>("obtener_instancias_activas")
     ]);
     this.banco = banco;
     this.instancias = instancias;
@@ -139,6 +174,21 @@ class Partida {
     this.#desenfocar();
     await this.guardarRejilla();
     this.#abrirMapa(mapa);
+  }
+
+  // ------------------------------------------------------------------
+  // Fichas (instancias activas)
+  // ------------------------------------------------------------------
+
+  seleccionarInstancia(instancia: Instancia | null) {
+    this.idInstanciaSeleccionada = instancia?.id_instancia ?? null;
+  }
+
+  /** PLACEHOLDER: de momento solo cambia la vida en memoria. Cuando exista el comando de Rust
+   *  (`modificar_vida`, con su delta), se llama aquí y los componentes no cambian. */
+  modificarVida(idInstancia: number, delta: number) {
+    const instancia = this.instancias.find((i) => i.id_instancia === idInstancia);
+    if (instancia) instancia.vida_actual += delta;
   }
 
   // ------------------------------------------------------------------
